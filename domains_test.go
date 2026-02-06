@@ -41,6 +41,19 @@ func Test_domainTree(t *testing.T) {
 	os.Remove(testlist)
 }
 
+func Test_domainTreeSub(t *testing.T) {
+	l := []string{
+		"com.x",
+	}
+
+	dt := newDomainTree()
+	dt.loadList(l)
+	assert.True(t, dt.has("x.com"))
+	assert.True(t, dt.has("something.x.com"))
+	assert.False(t, dt.has("something.xiaomi.com"))
+	assert.False(t, dt.has("xiaomi.com"))
+}
+
 func Test_domainLevel(t *testing.T) {
 	assert.Equal(t, 5, domainLevel("a.b.c.d.e"))
 }

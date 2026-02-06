@@ -50,15 +50,17 @@ func (d *domainTree) has(s string) (ok bool) {
 
 	if ok {
 		if pfx == dr {
-			return
+			return true
 		}
 
-		if domainLevel(pfx) == domainLevel(dr) {
+		if len(dr) > len(pfx) && dr[len(pfx)] != '.' {
 			return false
 		}
+
+		return true
 	}
 
-	return
+	return false
 }
 
 func (d *domainTree) loadFile(path string) (i, s int, err error) {
