@@ -2,7 +2,7 @@
 
 # dnstap-bgp
 
-Fork of [blind-oracle/dnstap-bgp](https://github.com/blind-oracle/dnstap-bgp). Current release: **1.2.0**.
+Fork of [blind-oracle/dnstap-bgp](https://github.com/blind-oracle/dnstap-bgp). Current release: **1.2.1**.
 
 Requires **Go 1.27**. BGP is provided by [GoBGP v4](https://github.com/osrg/gobgp).
 
@@ -27,8 +27,8 @@ This daemon solves the problem of manipulating traffic based on domain names ins
 * Configurable timeout to purge entries from the cache
 * Persist the cache on disk (BoltDB)
 * Sync obtained IPs with other **dnstap-bgp** instances over authenticated HTTP(S)
-* Linux: can run in a dedicated network namespace via `ip netns` — see `deploy/*` systemd units. Useful when a BGP router on the same host cannot peer with its own IPs (at least BIRD)
-* OPNsense 26.7 / FreeBSD 15 package (`os-dnstap-bgp`)
+* Linux: systemd unit runs the daemon in a network namespace (`ip netns`) so a local BIRD/FRR can peer with it
+* OPNsense 26.7 / FreeBSD 15: rc script runs the daemon in a **VNET jail** (the FreeBSD analog of `ip netns`) with an epair
 
 ## Signals
 
@@ -39,6 +39,43 @@ This daemon solves the problem of manipulating traffic based on domain names ins
 | `SIGTERM` / `SIGINT` | Graceful shutdown |
 
 `SIGHUP` / `SIGUSR1` are Unix-only. On Windows only `SIGINT` / `SIGTERM` are handled.
+
+## File paths
+
+### OPNsense 26.7 / FreeBSD (package `os-dnstap-bgp`)
+
+| Role | Path |
+| --- | --- |
+| Binary | `/usr/local/sbin/dnstap-bgp` |
+| Main config | `/usr/local/etc/dnstap-bgp/dnstap-bgp.conf` |
+| Main config sample | `/usr/local/etc/dnstap-bgp/dnstap-bgp.conf.sample` |
+| **Domain list (default)** | **`/usr/local/etc/dnstap-bgp/domains.txt`** |
+| Domain list sample | `/usr/local/etc/dnstap-bgp/domains.txt.sample` |
+| rc.d service | `/usr/local/etc/rc.d/dnstap_bgp` |
+| rc knobs (enable, VNET, epair IPs) | `/usr/local/etc/rc.conf.d/dnstap_bgp` |
+| rc knobs sample | `/usr/local/etc/rc.conf.d/dnstap_bgp.sample` |
+| BoltDB cache | `/var/db/dnstap-bgp/cache.db` |
+| DNSTap UNIX socket | `/var/run/dnstap-bgp/dnstap.sock` |
+| PID file | `/var/run/dnstap_bgp.pid` |
+| Optional sync TLS cert | `/usr/local/etc/dnstap-bgp/sync.crt` |
+| Optional sync TLS key | `/usr/local/etc/dnstap-bgp/sync.key` |
+
+`dnstap-bgp.service` is **not** an OPNsense file. It is a **Linux systemd** unit. OPNsense uses `/usr/local/etc/rc.d/dnstap_bgp`.
+
+### Linux (deb/rpm / systemd)
+
+| Role | Path |
+| --- | --- |
+| Binary | `/usr/bin/dnstap-bgp` |
+| systemd unit | `/usr/lib/systemd/system/dnstap-bgp.service` |
+| systemd environment | `/etc/default/dnstap-bgp` |
+| Main config | `/etc/dnstap-bgp/dnstap-bgp.conf` |
+| Domain list (default in sample) | `/var/cache/domains.txt` |
+| BoltDB cache | `/var/cache/dnstap-bgp.db` |
+| DNSTap UNIX socket | `/tmp/dnstap.sock` |
+| Optional sync TLS cert/key (if you set them) | `/etc/dnstap-bgp/sync.crt`, `/etc/dnstap-bgp/sync.key` |
+
+`/etc/default/dnstap-bgp` sets `CONFIG=/etc/dnstap-bgp/dnstap-bgp.conf` and `NAMESPACE=dtap`. The unit starts with `ip netns exec ${NAMESPACE}`.
 
 ## Synchronization
 
@@ -59,42 +96,61 @@ Without a token the process refuses to start the syncer.
 
 ### GitHub releases
 
-See the [releases page](https://github.com/ha-harbor-ws/dnstap-bgp/releases) for tagged builds.
+See the [releases page](https://github.com/ha-harbor-ws/dnstap-bgp/releases).
 
 ### OPNsense 26.7
 
-Install the `os-dnstap-bgp-*-opnsense26.7-freebsd15-amd64.pkg` asset (ABI `FreeBSD:15:amd64`):
+ABI: `FreeBSD:15:amd64`.
 
 ```
-pkg add os-dnstap-bgp-1.2.0-opnsense26.7-freebsd15-amd64.pkg
+pkg add os-dnstap-bgp-1.2.1-opnsense26.7-freebsd15-amd64.pkg
 ```
 
-Edit `/usr/local/etc/dnstap-bgp/dnstap-bgp.conf` and `domains.txt`, then:
+The post-install script copies samples to:
+
+* `/usr/local/etc/dnstap-bgp/dnstap-bgp.conf`
+* `/usr/local/etc/dnstap-bgp/domains.txt`
+* `/usr/local/etc/rc.conf.d/dnstap_bgp`
+
+Edit the domain list and BGP settings, then:
 
 ```
 sysrc dnstap_bgp_enable=YES
 service dnstap_bgp start
 ```
 
-Reload domains without restart: `service dnstap_bgp reload`.
+Reload domains: `service dnstap_bgp reload`.
 
-Point Unbound/BIND `dnstap-output` at `/var/run/dnstap-bgp/dnstap.sock`.
+Point Unbound `dnstap-socket-path` (or BIND `dnstap-output`) at `/var/run/dnstap-bgp/dnstap.sock`.
 
-For ARM appliances build locally: `python deploy/opnsense/build-pkg.py --arch arm64`.
+Default VNET jail `dtap`:
+
+* host epair: `192.168.113.1/30`
+* jail epair: `192.168.113.2/30`
+
+FRR/BIRD on the host should neighbor `192.168.113.2`; `dnstap-bgp` peers with `192.168.113.1`. The UNIX DNSTap socket stays on the shared filesystem, so Unbound on the host can still write to it.
+
+To run without a jail (host network stack):
+
+```
+sysrc dnstap_bgp_vnet=NO
+```
+
+For ARM: `python deploy/opnsense/build-pkg.py --arch arm64`.
 
 ### Linux packages
 
-Deb/rpm can be built with *fpm*: `make rpm` or `make deb`.
+Deb/rpm with *fpm*: `make rpm` or `make deb`. Create the netns before start, e.g. `ip netns add dtap`.
 
 ### From source
 
-Go 1.27+ is required:
+Go 1.27+:
 
 ```
 make
 ```
 
-OPNsense/FreeBSD package from a Linux or Windows host (cross-compile):
+OPNsense package (cross-compile):
 
 ```
 make opnsense-pkg
@@ -102,8 +158,10 @@ make opnsense-pkg
 
 ## Configuration
 
-* Linux / generic: [`deploy/dnstap-bgp.conf`](deploy/dnstap-bgp.conf)
-* OPNsense / FreeBSD: [`deploy/opnsense/dnstap-bgp.conf.sample`](deploy/opnsense/dnstap-bgp.conf.sample)
+Repo templates:
+
+* Linux: [`deploy/dnstap-bgp.conf`](deploy/dnstap-bgp.conf), [`deploy/dnstap-bgp.service`](deploy/dnstap-bgp.service), [`deploy/dnstap-bgp`](deploy/dnstap-bgp) → `/etc/default/dnstap-bgp`
+* OPNsense: [`deploy/opnsense/dnstap-bgp.conf.sample`](deploy/opnsense/dnstap-bgp.conf.sample), [`deploy/opnsense/rc.d/dnstap_bgp`](deploy/opnsense/rc.d/dnstap_bgp), [`deploy/opnsense/rc.conf.d/dnstap_bgp.sample`](deploy/opnsense/rc.conf.d/dnstap_bgp.sample)
 
 If `[syncer]` is enabled, set `token`. `tlsCert` and `tlsKey` must be set together.
 
@@ -111,9 +169,16 @@ If `[syncer]` is enabled, set `token`. `tlsCert` and `tlsKey` must be set togeth
 
 DNSTap is client–server: the DNS server is the client, **dnstap-bgp** is the server.
 
-### Unbound
+### Unbound on OPNsense
 
-Unbound can use DNSTap only through UNIX sockets.
+```
+dnstap:
+    dnstap-enable: yes
+    dnstap-socket-path: "/var/run/dnstap-bgp/dnstap.sock"
+    dnstap-log-client-response-messages: yes
+```
+
+### Unbound on Linux
 
 ```
 dnstap:
@@ -122,13 +187,23 @@ dnstap:
     dnstap-log-client-response-messages: yes
 ```
 
-On OPNsense use `/var/run/dnstap-bgp/dnstap.sock`.
-
 **Important:** on Ubuntu, AppArmor often blocks Unbound from the DNSTap socket. Disable the profile for Unbound or fix the rules.
 
 ### BIND
 
 DNSTap is supported since 9.11, but is often not built into distro packages. BIND also connects only via UNIX socket.
+
+OPNsense:
+
+```
+dnstap {
+    client response;
+};
+
+dnstap-output unix "/var/run/dnstap-bgp/dnstap.sock"
+```
+
+Linux:
 
 ```
 dnstap {

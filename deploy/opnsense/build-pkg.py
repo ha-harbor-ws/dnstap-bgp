@@ -104,6 +104,11 @@ def stage_files(stage: Path, binary: Path) -> dict[str, Path]:
         f"{PREFIX}/etc/dnstap-bgp/domains.txt.sample",
         text=True,
     )
+    put(
+        OPNSENSE / "rc.conf.d" / "dnstap_bgp.sample",
+        f"{PREFIX}/etc/rc.conf.d/dnstap_bgp.sample",
+        text=True,
+    )
     return mapping
 
 
@@ -117,7 +122,8 @@ def file_mode(dest: str) -> int:
 
 def post_install_script() -> str:
     return """#!/bin/sh
-mkdir -p /var/run/dnstap-bgp /var/db/dnstap-bgp /usr/local/etc/dnstap-bgp
+mkdir -p /var/run/dnstap-bgp /var/db/dnstap-bgp \\
+    /usr/local/etc/dnstap-bgp /usr/local/etc/rc.conf.d
 if [ ! -f /usr/local/etc/dnstap-bgp/dnstap-bgp.conf ]; then
     cp /usr/local/etc/dnstap-bgp/dnstap-bgp.conf.sample \\
         /usr/local/etc/dnstap-bgp/dnstap-bgp.conf
@@ -125,6 +131,10 @@ fi
 if [ ! -f /usr/local/etc/dnstap-bgp/domains.txt ]; then
     cp /usr/local/etc/dnstap-bgp/domains.txt.sample \\
         /usr/local/etc/dnstap-bgp/domains.txt
+fi
+if [ ! -f /usr/local/etc/rc.conf.d/dnstap_bgp ]; then
+    cp /usr/local/etc/rc.conf.d/dnstap_bgp.sample \\
+        /usr/local/etc/rc.conf.d/dnstap_bgp
 fi
 """
 

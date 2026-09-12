@@ -4,6 +4,10 @@
 # REQUIRE: NETWORKING
 # KEYWORD: shutdown
 
+# FreeBSD/OPNsense analog of Linux `ip netns`: a persist VNET jail with an
+# epair. The jail shares the host filesystem (path=/) so Unbound can still
+# write to the UNIX DNSTap socket, while BGP TCP runs in a separate stack.
+
 . /etc/rc.subr
 
 name="dnstap_bgp"
@@ -14,19 +18,41 @@ load_rc_config ${name}
 
 : ${dnstap_bgp_enable:="NO"}
 : ${dnstap_bgp_config:="/usr/local/etc/dnstap-bgp/dnstap-bgp.conf"}
+: ${dnstap_bgp_vnet:="YES"}
+: ${dnstap_bgp_jail_name:="dtap"}
+: ${dnstap_bgp_host_ip:="192.168.113.1/30"}
+: ${dnstap_bgp_jail_ip:="192.168.113.2/30"}
 
 pidfile="/var/run/${name}.pid"
 procname="/usr/local/sbin/dnstap-bgp"
-command="/usr/sbin/daemon"
-command_args="-S -T ${name} -p ${pidfile} ${procname} -config ${dnstap_bgp_config}"
+epairfile="/var/run/${name}.epair"
 
 extra_commands="reload"
 reload_cmd="dnstap_bgp_reload"
 start_precmd="dnstap_bgp_prestart"
 
+if checkyesno dnstap_bgp_vnet; then
+	start_cmd="dnstap_bgp_vnet_start"
+	stop_cmd="dnstap_bgp_vnet_stop"
+	status_cmd="dnstap_bgp_status"
+else
+	command="/usr/sbin/daemon"
+	command_args="-S -T ${name} -p ${pidfile} ${procname} -config ${dnstap_bgp_config}"
+fi
+
 dnstap_bgp_prestart()
 {
-	mkdir -p /var/run/dnstap-bgp /var/db/dnstap-bgp
+	mkdir -p /var/run/dnstap-bgp /var/db/dnstap-bgp /usr/local/etc/dnstap-bgp
+}
+
+dnstap_bgp_status()
+{
+	if [ -f "${pidfile}" ] && kill -0 "$(cat "${pidfile}")" 2>/dev/null; then
+		echo "${name} is running as pid $(cat "${pidfile}")."
+		return 0
+	fi
+	echo "${name} is not running."
+	return 1
 }
 
 dnstap_bgp_reload()
@@ -36,6 +62,73 @@ dnstap_bgp_reload()
 		return 1
 	fi
 	kill -HUP "$(cat "${pidfile}")"
+}
+
+dnstap_bgp_vnet_cleanup()
+{
+	if [ -f "${pidfile}" ]; then
+		kill "$(cat "${pidfile}")" 2>/dev/null || true
+		i=0
+		while [ "${i}" -lt 5 ] && [ -f "${pidfile}" ]; do
+			sleep 1
+			i=$((i + 1))
+		done
+		rm -f "${pidfile}"
+	fi
+	if /usr/sbin/jls -j "${dnstap_bgp_jail_name}" >/dev/null 2>&1; then
+		/usr/sbin/jail -r "${dnstap_bgp_jail_name}" >/dev/null 2>&1 || true
+	fi
+	if [ -f "${epairfile}" ]; then
+		unit=$(cat "${epairfile}")
+		ifconfig "${unit}a" destroy >/dev/null 2>&1 || true
+		rm -f "${epairfile}"
+	fi
+}
+
+dnstap_bgp_vnet_stop()
+{
+	dnstap_bgp_vnet_cleanup
+}
+
+dnstap_bgp_vnet_start()
+{
+	dnstap_bgp_vnet_cleanup
+
+	kldstat -q -m if_epair || kldload if_epair || return 1
+
+	/usr/sbin/jail -c \
+		name="${dnstap_bgp_jail_name}" \
+		persist \
+		vnet \
+		path=/ \
+		host.hostname="${dnstap_bgp_jail_name}" || return 1
+
+	epaira=$(ifconfig epair create) || {
+		/usr/sbin/jail -r "${dnstap_bgp_jail_name}" >/dev/null 2>&1 || true
+		return 1
+	}
+	unit=${epaira%a}
+	echo "${unit}" > "${epairfile}"
+
+	ifconfig "${unit}a" inet ${dnstap_bgp_host_ip} up || {
+		dnstap_bgp_vnet_cleanup
+		return 1
+	}
+	ifconfig "${unit}b" vnet "${dnstap_bgp_jail_name}" || {
+		dnstap_bgp_vnet_cleanup
+		return 1
+	}
+	jexec "${dnstap_bgp_jail_name}" ifconfig "${unit}b" inet ${dnstap_bgp_jail_ip} up || {
+		dnstap_bgp_vnet_cleanup
+		return 1
+	}
+
+	host_addr=${dnstap_bgp_host_ip%/*}
+	jexec "${dnstap_bgp_jail_name}" route add default "${host_addr}" >/dev/null 2>&1 || true
+
+	jexec "${dnstap_bgp_jail_name}" /usr/sbin/daemon \
+		-S -T "${name}" -p "${pidfile}" \
+		"${procname}" -config "${dnstap_bgp_config}"
 }
 
 run_rc_command "$1"

@@ -1,6 +1,6 @@
 [Unit]
-Description=DNSTap to BGP exporter
-Documentation=https://github.com/blind-oracle/dnstap-bgp
+Description=DNSTap to BGP exporter (Linux systemd; not used on OPNsense)
+Documentation=https://github.com/ha-harbor-ws/dnstap-bgp
 After=network.target
 
 [Service]

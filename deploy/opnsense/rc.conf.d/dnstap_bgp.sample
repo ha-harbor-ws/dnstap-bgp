@@ -1,0 +1,9 @@
+# /usr/local/etc/rc.conf.d/dnstap_bgp
+# rc(8) knobs for os-dnstap-bgp on OPNsense / FreeBSD.
+#
+# dnstap_bgp_enable="YES"
+dnstap_bgp_config="/usr/local/etc/dnstap-bgp/dnstap-bgp.conf"
+dnstap_bgp_vnet="YES"
+dnstap_bgp_jail_name="dtap"
+dnstap_bgp_host_ip="192.168.113.1/30"
+dnstap_bgp_jail_ip="192.168.113.2/30"
