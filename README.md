@@ -24,7 +24,7 @@ This daemon was created to solve the problem of manipulating traffic based on do
 * Can be switched to a dedicated namespace using `ip netns` - see `deploy/*` init scripts for systemd. Useful when running with BGP router on the same host - ususally it can't peer with its own IPs (at least `bird`)
 
 ## Synchronization
-**dnstap-bgp** can optionally push the obtained IPs to other **dnstap-bgp** instances. It also periodically syncs its cache with peers to keep it up-to-date in case of network outages. The interaction is done using simple HTTP queries and JSON.
+**dnstap-bgp** can optionally push the obtained IPs to other **dnstap-bgp** instances. It also periodically syncs its cache with peers to keep it up-to-date in case of network outages. The interaction is done using HTTP(S) JSON, authenticated with a shared Bearer token (`syncer.token`). TLS is optional via `tlsCert`/`tlsKey`.
 
 ## Limitations
 * IDN (punycode) domain names are currenly not supported and are silently skipped

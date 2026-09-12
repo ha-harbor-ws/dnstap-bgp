@@ -30,17 +30,40 @@ func (c *cache) cleanupScheduler() {
 
 func (c *cache) cleanup() {
 	now := time.Now()
+	var expired []*cacheEntry
 	c.Lock()
 	for k, v := range c.m {
 		if now.Sub(v.TS) >= c.ttl {
 			delete(c.m, k)
-
-			if c.expireCb != nil {
-				c.expireCb(v)
-			}
+			expired = append(expired, v)
 		}
 	}
 	c.Unlock()
+
+	for _, v := range expired {
+		if c.expireCb != nil {
+			c.expireCb(v)
+		}
+	}
+}
+
+func (c *cache) purgeUnmatched(dTree *domainTree, cb expireFunc) int {
+	var removed []*cacheEntry
+	c.Lock()
+	for k, v := range c.m {
+		if !dTree.has(v.Domain) {
+			delete(c.m, k)
+			removed = append(removed, v)
+		}
+	}
+	c.Unlock()
+
+	for _, v := range removed {
+		if cb != nil {
+			cb(v)
+		}
+	}
+	return len(removed)
 }
 
 func (c *cache) exists(ip net.IP, update bool) bool {

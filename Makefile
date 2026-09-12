@@ -19,6 +19,12 @@ build:
 	mkdir -p $(OUT)/root/etc/$(NAME)
 	cp deploy/dnstap-bgp.conf $(OUT)/root/etc/$(NAME)/$(NAME).conf
 
+opnsense-pkg:
+	python deploy/opnsense/build-pkg.py --arch amd64
+
+opnsense-pkg-arm64:
+	python deploy/opnsense/build-pkg.py --arch arm64
+
 deb:
 	make build
 	make build-deb

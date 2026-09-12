@@ -4,14 +4,15 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/golang/protobuf/ptypes/any"
-	api "github.com/osrg/gobgp/v3/api"
-	gobgp "github.com/osrg/gobgp/v3/pkg/server"
-	"google.golang.org/protobuf/types/known/anypb"
+	api "github.com/osrg/gobgp/v4/api"
+	"github.com/osrg/gobgp/v4/pkg/apiutil"
+	"github.com/osrg/gobgp/v4/pkg/packet/bgp"
+	gobgp "github.com/osrg/gobgp/v4/pkg/server"
 )
 
 type bgpCfg struct {
@@ -124,93 +125,112 @@ func (b *bgpServer) addPeer(addr string) (err error) {
 	})
 }
 
-func (b *bgpServer) getPath(ip net.IP) *api.Path {
-	var nh string
-	var pfxLen uint32 = 32
-	if ip.To4() == nil {
-		if !b.c.IPv6 {
-			return nil
+func prefixFromIP(ip net.IP) (netip.Prefix, bgp.Family, error) {
+	if v4 := ip.To4(); v4 != nil {
+		addr, ok := netip.AddrFromSlice(v4)
+		if !ok {
+			return netip.Prefix{}, 0, fmt.Errorf("invalid IPv4 address: %s", ip)
 		}
-		pfxLen = 128
+		return netip.PrefixFrom(addr, 32), bgp.RF_IPv4_UC, nil
 	}
 
-	nlri, _ := anypb.New(&api.IPAddressPrefix{
-		Prefix:    ip.String(),
-		PrefixLen: pfxLen,
-	})
+	addr, ok := netip.AddrFromSlice(ip)
+	if !ok {
+		return netip.Prefix{}, 0, fmt.Errorf("invalid IP address: %s", ip)
+	}
+	addr = addr.Unmap()
+	if addr.Is4() {
+		return netip.PrefixFrom(addr, 32), bgp.RF_IPv4_UC, nil
+	}
+	return netip.PrefixFrom(addr, 128), bgp.RF_IPv6_UC, nil
+}
 
-	a1, _ := anypb.New(&api.OriginAttribute{
-		Origin: 0,
-	})
-
-	if ip.To4() == nil {
-		v6Family := &api.Family{
-			Afi:  api.Family_AFI_IP6,
-			Safi: api.Family_SAFI_UNICAST,
-		}
-
+func (b *bgpServer) nextHop(family bgp.Family) (netip.Addr, error) {
+	var raw string
+	if family == bgp.RF_IPv6_UC {
 		if b.c.NextHopIPv6 != "" {
-			nh = b.c.NextHopIPv6
+			raw = b.c.NextHopIPv6
 		} else {
-			nh = "fd00::1"
+			raw = "fd00::1"
 		}
-
-		v6Attrs, _ := anypb.New(&api.MpReachNLRIAttribute{
-			Family:   v6Family,
-			NextHops: []string{nh},
-			Nlris:    []*any.Any{nlri},
-		})
-
-		return &api.Path{
-			Family: v6Family,
-			Nlri:   nlri,
-			Pattrs: []*any.Any{a1, v6Attrs},
-		}
+	} else if b.c.NextHop != "" {
+		raw = b.c.NextHop
+	} else if b.c.SourceIP != "" {
+		raw = b.c.SourceIP
 	} else {
-		if b.c.NextHop != "" {
-			nh = b.c.NextHop
-		} else if b.c.SourceIP != "" {
-			nh = b.c.SourceIP
-		} else {
-			nh = b.c.RouterID
-		}
-
-		a2, _ := anypb.New(&api.NextHopAttribute{
-			NextHop: nh,
-		})
-
-		return &api.Path{
-			Family: &api.Family{
-				Afi:  api.Family_AFI_IP,
-				Safi: api.Family_SAFI_UNICAST,
-			},
-			Nlri:   nlri,
-			Pattrs: []*any.Any{a1, a2},
-		}
+		raw = b.c.RouterID
 	}
+
+	addr, err := netip.ParseAddr(raw)
+	if err != nil {
+		return netip.Addr{}, fmt.Errorf("invalid next-hop %q: %w", raw, err)
+	}
+	return addr, nil
 }
 
-func (b *bgpServer) addHost(ip net.IP) (err error) {
-	p := b.getPath(ip)
-	if p == nil {
-		return
+func (b *bgpServer) getPath(ip net.IP) (*apiutil.Path, error) {
+	prefix, family, err := prefixFromIP(ip)
+	if err != nil {
+		return nil, err
+	}
+	if family == bgp.RF_IPv6_UC && !b.c.IPv6 {
+		return nil, nil
 	}
 
-	_, err = b.s.AddPath(context.Background(), &api.AddPathRequest{
-		Path: p,
+	nlri, err := bgp.NewIPAddrPrefix(prefix)
+	if err != nil {
+		return nil, err
+	}
+
+	nh, err := b.nextHop(family)
+	if err != nil {
+		return nil, err
+	}
+
+	origin := bgp.NewPathAttributeOrigin(0)
+	attrs := []bgp.PathAttributeInterface{origin}
+
+	if family == bgp.RF_IPv6_UC {
+		mp, err := bgp.NewPathAttributeMpReachNLRI(family, []bgp.PathNLRI{{NLRI: nlri}}, nh)
+		if err != nil {
+			return nil, err
+		}
+		attrs = append(attrs, mp)
+	} else {
+		nextHop, err := bgp.NewPathAttributeNextHop(nh)
+		if err != nil {
+			return nil, err
+		}
+		attrs = append(attrs, nextHop)
+	}
+
+	return &apiutil.Path{
+		Family: family,
+		Nlri:   nlri,
+		Attrs:  attrs,
+	}, nil
+}
+
+func (b *bgpServer) addHost(ip net.IP) error {
+	p, err := b.getPath(ip)
+	if err != nil || p == nil {
+		return err
+	}
+
+	_, err = b.s.AddPath(apiutil.AddPathRequest{
+		Paths: []*apiutil.Path{p},
 	})
-
-	return
+	return err
 }
 
-func (b *bgpServer) delHost(ip net.IP) (err error) {
-	p := b.getPath(ip)
-	if p == nil {
-		return
+func (b *bgpServer) delHost(ip net.IP) error {
+	p, err := b.getPath(ip)
+	if err != nil || p == nil {
+		return err
 	}
 
-	return b.s.DeletePath(context.Background(), &api.DeletePathRequest{
-		Path: p,
+	return b.s.DeletePath(apiutil.DeletePathRequest{
+		Paths: []*apiutil.Path{p},
 	})
 }
 

@@ -68,6 +68,7 @@ func (d *domainTree) loadFile(path string) (i, s int, err error) {
 	if err != nil {
 		return 0, 0, fmt.Errorf("unable to open file: %w", err)
 	}
+	defer f.Close()
 
 	domains := []string{}
 	sc := bufio.NewScanner(f)

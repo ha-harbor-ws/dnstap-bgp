@@ -3,20 +3,31 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/subtle"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"net/http"
-	"net/url"
+	"sync"
 	"time"
 )
 
+const (
+	syncerAuthScheme = "Bearer "
+	syncerMaxPutBody = 1 << 20
+)
+
 type syncerCfg struct {
-	Listen       string
-	SyncInterval string
-	Peers        []string
+	Listen                string
+	SyncInterval          string
+	Peers                 []string
+	Token                 string
+	TLSCert               string
+	TLSKey                string
+	TLSInsecureSkipVerify bool
 }
 
 type getAllFunc func() []*cacheEntry
@@ -29,19 +40,32 @@ type syncer struct {
 
 	syncInterval time.Duration
 	peers        []string
+	token        string
+	useTLS       bool
 
 	getAll getAllFunc
 	add    addFunc
 	syncCb syncFunc
 
-	shutdown chan struct{}
+	shutdown  chan struct{}
+	closeOnce sync.Once
 }
 
 func newSyncer(cf *syncerCfg, getAll getAllFunc, add addFunc, syncCb syncFunc) (s *syncer, err error) {
+	if cf.Token == "" {
+		return nil, fmt.Errorf("syncer token is required")
+	}
+
+	if (cf.TLSCert == "") != (cf.TLSKey == "") {
+		return nil, fmt.Errorf("tlsCert and tlsKey must be set together")
+	}
+
 	s = &syncer{
 		getAll:       getAll,
 		add:          add,
 		peers:        cf.Peers,
+		token:        cf.Token,
+		useTLS:       cf.TLSCert != "" && cf.TLSKey != "",
 		syncCb:       syncCb,
 		shutdown:     make(chan struct{}),
 		syncInterval: 10 * time.Minute,
@@ -54,59 +78,112 @@ func newSyncer(cf *syncerCfg, getAll getAllFunc, add addFunc, syncCb syncFunc) (
 	}
 
 	if len(cf.Peers) > 0 {
+		tr := http.DefaultTransport
+		if s.useTLS {
+			tr = &http.Transport{
+				TLSClientConfig: &tls.Config{
+					MinVersion:         tls.VersionTLS12,
+					InsecureSkipVerify: cf.TLSInsecureSkipVerify,
+				},
+			}
+		}
 		s.c = &http.Client{
-			Timeout: 5 * time.Second,
+			Timeout:   5 * time.Second,
+			Transport: tr,
 		}
 	}
 
-	if s.syncInterval > 0 {
+	if cf.Listen != "" {
+		addr, err := net.ResolveTCPAddr("tcp", cf.Listen)
+		if err != nil {
+			return nil, err
+		}
+
+		l, err := net.ListenTCP("tcp", addr)
+		if err != nil {
+			return nil, err
+		}
+
+		mux := http.NewServeMux()
+		mux.HandleFunc("/fetch", s.handleFetch)
+		mux.HandleFunc("/put", s.handlePut)
+
+		s.s = &http.Server{
+			Handler:           mux,
+			ReadHeaderTimeout: 10 * time.Second,
+		}
+
+		go func() {
+			var serveErr error
+			if s.useTLS {
+				serveErr = s.s.ServeTLS(l, cf.TLSCert, cf.TLSKey)
+			} else {
+				serveErr = s.s.Serve(l)
+			}
+			if serveErr != nil && serveErr != http.ErrServerClosed {
+				log.Printf("Syncer: server error: %s", serveErr)
+			}
+		}()
+	}
+
+	if s.syncInterval > 0 && len(s.peers) > 0 {
 		go s.syncScheduler()
 	}
-
-	if cf.Listen == "" {
-		return
-	}
-
-	addr, err := net.ResolveTCPAddr("tcp", cf.Listen)
-	if err != nil {
-		return nil, err
-	}
-
-	l, err := net.ListenTCP("tcp", addr)
-	if err != nil {
-		return nil, err
-	}
-
-	s.s = &http.Server{}
-
-	http.HandleFunc("/fetch", s.handleFetch)
-	http.HandleFunc("/put", s.handlePut)
-
-	go func() {
-		if err := s.s.Serve(l); err != nil && err != http.ErrServerClosed {
-			log.Fatal(err)
-		}
-	}()
 
 	return
 }
 
+func (s *syncer) authorized(r *http.Request) bool {
+	got := r.Header.Get("Authorization")
+	if len(got) < len(syncerAuthScheme) {
+		return false
+	}
+	if subtle.ConstantTimeCompare([]byte(got[:len(syncerAuthScheme)]), []byte(syncerAuthScheme)) != 1 {
+		return false
+	}
+	provided := got[len(syncerAuthScheme):]
+	if len(provided) != len(s.token) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(provided), []byte(s.token)) == 1
+}
+
 func (s *syncer) handleFetch(wr http.ResponseWriter, r *http.Request) {
-	if r.Method != "GET" {
-		wr.WriteHeader(400)
+	if !s.authorized(r) {
+		wr.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	if r.Method != http.MethodGet {
+		wr.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
 
+	wr.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(wr).Encode(s.getAll())
 }
 
 func (s *syncer) handlePut(wr http.ResponseWriter, r *http.Request) {
+	if !s.authorized(r) {
+		wr.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	if r.Method != http.MethodPut {
+		wr.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
 	defer r.Body.Close()
+	body := http.MaxBytesReader(wr, r.Body, syncerMaxPutBody)
 
 	c := &cacheEntry{}
-	if err := json.NewDecoder(r.Body).Decode(c); err != nil && err != io.EOF {
-		wr.WriteHeader(400)
+	if err := json.NewDecoder(body).Decode(c); err != nil && err != io.EOF {
+		wr.WriteHeader(http.StatusBadRequest)
 		fmt.Fprintf(wr, "Bad request: %s", err)
+		return
+	}
+	if len(c.IP) == 0 || c.Domain == "" {
+		wr.WriteHeader(http.StatusBadRequest)
+		fmt.Fprint(wr, "Bad request: ip and domain are required")
 		return
 	}
 
@@ -127,19 +204,30 @@ func (s *syncer) broadcast(e *cacheEntry) (err error) {
 	return
 }
 
-func (s *syncer) callPeer(p, handler, method string, body io.ReadCloser) (resp *http.Response, err error) {
-	u, _ := url.Parse(fmt.Sprintf("http://%s/%s", p, handler))
-	r := &http.Request{
-		Method: method,
-		URL:    u,
-		Body:   body,
+func (s *syncer) scheme() string {
+	if s.useTLS {
+		return "https"
+	}
+	return "http"
+}
+
+func (s *syncer) callPeer(p, handler, method string, body io.Reader) (resp *http.Response, err error) {
+	u := fmt.Sprintf("%s://%s/%s", s.scheme(), p, handler)
+	req, err := http.NewRequest(method, u, body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", syncerAuthScheme+s.token)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
 
-	if resp, err = s.c.Do(r); err != nil {
+	if resp, err = s.c.Do(req); err != nil {
 		return nil, err
 	}
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
 		return nil, fmt.Errorf("HTTP Code not 200: %d", resp.StatusCode)
 	}
 
@@ -148,6 +236,7 @@ func (s *syncer) callPeer(p, handler, method string, body io.ReadCloser) (resp *
 
 func (s *syncer) syncScheduler() {
 	t := time.NewTicker(s.syncInterval)
+	defer t.Stop()
 
 	for {
 		select {
@@ -183,7 +272,7 @@ func (s *syncer) syncAll() {
 }
 
 func (s *syncer) fetchRemote(p string) (es []*cacheEntry, err error) {
-	resp, err := s.callPeer(p, "fetch", "GET", nil)
+	resp, err := s.callPeer(p, "fetch", http.MethodGet, nil)
 	if err != nil {
 		return
 	}
@@ -197,9 +286,11 @@ func (s *syncer) fetchRemote(p string) (es []*cacheEntry, err error) {
 }
 
 func (s *syncer) send(e *cacheEntry, p string) (err error) {
-	js, _ := json.Marshal(e)
-	b := bytes.NewReader(js)
-	resp, err := s.callPeer(p, "put", "PUT", io.NopCloser(b))
+	js, err := json.Marshal(e)
+	if err != nil {
+		return err
+	}
+	resp, err := s.callPeer(p, "put", http.MethodPut, bytes.NewReader(js))
 	if err != nil {
 		return
 	}
@@ -209,7 +300,13 @@ func (s *syncer) send(e *cacheEntry, p string) (err error) {
 }
 
 func (s *syncer) close() error {
-	close(s.shutdown)
+	s.closeOnce.Do(func() {
+		close(s.shutdown)
+	})
+
+	if s.s == nil {
+		return nil
+	}
 
 	c, f := context.WithTimeout(context.Background(), 5*time.Second)
 	defer f()

@@ -6,7 +6,6 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -65,13 +64,17 @@ func main() {
 		}
 	}
 
-	expireCb := func(e *cacheEntry) {
-		log.Printf("%s (%s) expired", e.IP, e.Domain)
+	withdraw := func(e *cacheEntry) {
 		bgp.delHost(e.IP)
 
 		if ipDB != nil {
 			ipDB.del(e.IP)
 		}
+	}
+
+	expireCb := func(e *cacheEntry) {
+		log.Printf("%s (%s) expired", e.IP, e.Domain)
+		withdraw(e)
 	}
 
 	ipCache := newCache(ttl, expireCb)
@@ -192,21 +195,31 @@ func main() {
 
 	go func() {
 		sigchannel := make(chan os.Signal, 1)
-		signal.Notify(sigchannel, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGUSR1, os.Interrupt)
+		signal.Notify(sigchannel, notifySignals()...)
 
 		for sig := range sigchannel {
 			switch sig {
-			case syscall.SIGHUP:
-				if i, s, err := dTree.loadFile(cfg.Domains); err != nil {
+			case sigReload:
+				i, s, err := dTree.loadFile(cfg.Domains)
+				if err != nil {
 					log.Printf("Unable to load file: %s", err)
-				} else {
-					log.Printf("Domains loaded: %d, skipped: %d", i, s)
+					continue
 				}
 
-			case os.Interrupt, syscall.SIGTERM:
+				log.Printf("Domains loaded: %d, skipped: %d", i, s)
+
+				n := ipCache.purgeUnmatched(dTree, func(e *cacheEntry) {
+					log.Printf("%s (%s) vanished after reload", e.IP, e.Domain)
+					withdraw(e)
+				})
+				if n > 0 {
+					log.Printf("Purged after reload: %d", n)
+				}
+
+			case os.Interrupt, sigTerm:
 				close(shutdown)
 
-			case syscall.SIGUSR1:
+			case sigStats:
 				log.Printf("IPs exported: %d, domains loaded: %d", ipCache.count(), dTree.count())
 			}
 		}

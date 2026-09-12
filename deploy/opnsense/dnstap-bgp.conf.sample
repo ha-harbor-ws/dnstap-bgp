@@ -1,0 +1,38 @@
+# OPNsense 26.7 / FreeBSD 15 sample configuration
+# Copy to dnstap-bgp.conf and adjust before enabling the service:
+#   sysrc dnstap_bgp_enable=YES
+#   service dnstap_bgp start
+
+# One FQDN per line, lowercase. IDN/punycode is not supported.
+domains = "/usr/local/etc/dnstap-bgp/domains.txt"
+
+# BoltDB cache (optional)
+cache = "/var/db/dnstap-bgp/cache.db"
+
+# Cache TTL, default 24h
+ttl = "24h"
+
+ipv6 = false
+
+[dnstap]
+# UNIX socket or IP:port. Point Unbound/BIND dnstap-output here.
+listen = "/var/run/dnstap-bgp/dnstap.sock"
+perm = "0666"
+
+[bgp]
+as = 65000
+routerID = "192.168.111.1"
+# sourceIP = "192.168.113.1"
+# nextHop = "192.168.112.1"
+peers = [
+    "192.168.0.1",
+]
+
+# Optional HTTP(S) sync between instances. Token is required if enabled.
+# [syncer]
+# listen = "0.0.0.0:8080"
+# token = "change-me"
+# syncInterval = "10m"
+# peers = [
+#     "192.168.0.2:8080",
+# ]

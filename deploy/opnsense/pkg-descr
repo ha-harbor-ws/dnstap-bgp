@@ -1,0 +1,19 @@
+dnstap-bgp intercepts DNS replies via DNSTap and announces the
+resolved IP addresses over BGP. Use it on OPNsense 26.7 (FreeBSD 15.1)
+to steer traffic by domain name instead of static prefixes.
+
+Install:
+  pkg add os-dnstap-bgp-VERSION.pkg
+
+Configure /usr/local/etc/dnstap-bgp/dnstap-bgp.conf and domains.txt,
+then enable the service:
+
+  sysrc dnstap_bgp_enable=YES
+  service dnstap_bgp start
+
+Reload the domain list without restart:
+
+  service dnstap_bgp reload
+
+Point Unbound or BIND dnstap-output at
+/var/run/dnstap-bgp/dnstap.sock.

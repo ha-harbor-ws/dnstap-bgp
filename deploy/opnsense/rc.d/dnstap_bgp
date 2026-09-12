@@ -1,0 +1,41 @@
+#!/bin/sh
+
+# PROVIDE: dnstap_bgp
+# REQUIRE: NETWORKING
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+
+name="dnstap_bgp"
+rcvar="dnstap_bgp_enable"
+desc="DNSTap to BGP exporter"
+
+load_rc_config ${name}
+
+: ${dnstap_bgp_enable:="NO"}
+: ${dnstap_bgp_config:="/usr/local/etc/dnstap-bgp/dnstap-bgp.conf"}
+
+pidfile="/var/run/${name}.pid"
+procname="/usr/local/sbin/dnstap-bgp"
+command="/usr/sbin/daemon"
+command_args="-S -T ${name} -p ${pidfile} ${procname} -config ${dnstap_bgp_config}"
+
+extra_commands="reload"
+reload_cmd="dnstap_bgp_reload"
+start_precmd="dnstap_bgp_prestart"
+
+dnstap_bgp_prestart()
+{
+	mkdir -p /var/run/dnstap-bgp /var/db/dnstap-bgp
+}
+
+dnstap_bgp_reload()
+{
+	if [ ! -f "${pidfile}" ]; then
+		echo "${name} is not running."
+		return 1
+	fi
+	kill -HUP "$(cat "${pidfile}")"
+}
+
+run_rc_command "$1"

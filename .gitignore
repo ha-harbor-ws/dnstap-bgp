@@ -1,7 +1,10 @@
 dnstap-bgp
+dnstap-bgp.exe
 !deploy/dnstap-bgp
 test*
 vendor*
 *.deb
 *.rpm
 .out
+dist/
+work/

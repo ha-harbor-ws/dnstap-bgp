@@ -41,6 +41,21 @@ func Test_domainTree(t *testing.T) {
 	os.Remove(testlist)
 }
 
+func Test_loadFileCloses(t *testing.T) {
+	testlist := "__test_close.txt"
+	err := os.WriteFile(testlist, []byte("foo.bar\n"), 0666)
+	assert.Nil(t, err)
+
+	dt := newDomainTree()
+	i, s, err := dt.loadFile(testlist)
+	assert.Nil(t, err)
+	assert.Equal(t, 1, i)
+	assert.Equal(t, 0, s)
+
+	err = os.Remove(testlist)
+	assert.Nil(t, err)
+}
+
 func Test_domainTreeSub(t *testing.T) {
 	l := []string{
 		"com.x",
