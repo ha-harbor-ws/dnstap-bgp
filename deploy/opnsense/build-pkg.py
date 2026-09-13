@@ -112,6 +112,20 @@ def stage_files(stage: Path, binary: Path) -> dict[str, Path]:
     return mapping
 
 
+def abs_install_path(dest: str) -> str:
+    """Путь установки с одним ведущим '/'.
+
+    FreeBSD pkg вызывает pkg_absolutepath(..., fromroot=true). Для tar-имени
+    без ведущего '/' он сначала пишет '/', затем снова добавляет '/' перед
+    каждым компонентом — получается '//usr/local/...' и ошибка
+    «File ... not specified in the manifest».
+    """
+    name = dest.replace("\\", "/")
+    while name.startswith("./"):
+        name = name[2:]
+    return "/" + name.lstrip("/")
+
+
 def file_mode(dest: str) -> int:
     if dest.endswith("/dnstap-bgp") and "/sbin/" in dest:
         return 0o755
@@ -159,7 +173,7 @@ def build_manifest(
     for dest, path in sorted(files.items()):
         digest = sha256_file(path)
         flatsize += path.stat().st_size
-        file_meta[dest] = f"1${digest}"
+        file_meta[abs_install_path(dest)] = f"1${digest}"
 
     return {
         "name": PKG_NAME,
@@ -210,9 +224,17 @@ def add_text(tar: tarfile.TarFile, name: str, data: bytes, mode: int = 0o644) ->
     tar.addfile(info, io.BytesIO(data))
 
 
+def _set_tarinfo_name(info: tarfile.TarInfo, name: str) -> None:
+    info.name = name
+    if not info.name.startswith("/") and name.startswith("/"):
+        # Python tarfile может срезать ведущий '/'; pkg его требует.
+        info.__dict__["_name"] = name
+
+
 def add_file(tar: tarfile.TarFile, dest: str, path: Path) -> None:
     data = path.read_bytes()
-    info = tarfile.TarInfo(name=dest.lstrip("/"))
+    info = tarfile.TarInfo()
+    _set_tarinfo_name(info, abs_install_path(dest))
     info.size = len(data)
     info.mode = file_mode(dest)
     info.uid = 0
@@ -220,6 +242,86 @@ def add_file(tar: tarfile.TarFile, dest: str, path: Path) -> None:
     info.uname = "root"
     info.gname = "wheel"
     tar.addfile(info, io.BytesIO(data))
+
+
+def _ustar_file_size(header: bytes) -> int:
+    raw = header[124:136].split(b"\0", 1)[0].strip()
+    return int(raw, 8) if raw else 0
+
+
+def _ustar_checksum(header: bytearray) -> None:
+    header[148:156] = b"        "
+    chksum = sum(header)
+    header[148:156] = f"{chksum:06o}".encode("ascii") + b"\0 "
+
+
+def ensure_absolute_payload_names(blob: bytes) -> bytes:
+    """Гарантирует ведущий '/' у payload-файлов в ustar (не у +MANIFEST)."""
+    out = bytearray()
+    off = 0
+    n = len(blob)
+    while off + 512 <= n:
+        header = bytearray(blob[off : off + 512])
+        if not any(header):
+            out.extend(blob[off:])
+            break
+        name = header[:100].split(b"\0", 1)[0]
+        prefix = header[345:500].split(b"\0", 1)[0]
+        size = _ustar_file_size(header)
+        data_end = off + 512 + ((size + 511) // 512) * 512
+        if data_end > n:
+            raise ValueError("truncated ustar archive")
+
+        if name.startswith(b"+"):
+            out.extend(blob[off:data_end])
+        else:
+            if prefix:
+                raise ValueError(
+                    f"ustar prefix split cannot add leading slash: {prefix!r}/{name!r}"
+                )
+            if not name.startswith(b"/"):
+                new_name = b"/" + name
+                if len(new_name) > 100:
+                    raise ValueError(f"ustar name too long: {new_name!r}")
+                header[:100] = new_name + b"\0" * (100 - len(new_name))
+                _ustar_checksum(header)
+            out.extend(header)
+            out.extend(blob[off + 512 : data_end])
+        off = data_end
+    else:
+        if off < n:
+            out.extend(blob[off:])
+    return bytes(out)
+
+
+def ustar_member_names(blob: bytes) -> list[str]:
+    names: list[str] = []
+    off = 0
+    n = len(blob)
+    while off + 512 <= n:
+        header = blob[off : off + 512]
+        if not any(header):
+            break
+        name = header[:100].split(b"\0", 1)[0].decode("utf-8")
+        prefix = header[345:500].split(b"\0", 1)[0].decode("utf-8")
+        names.append(f"{prefix}/{name}" if prefix else name)
+        size = _ustar_file_size(header)
+        off += 512 + ((size + 511) // 512) * 512
+    return names
+
+
+def assert_pkg_archive(blob: bytes, files: dict[str, Path]) -> None:
+    names = ustar_member_names(blob)
+    if len(names) < 2 or names[:2] != ["+COMPACT_MANIFEST", "+MANIFEST"]:
+        raise SystemExit(f"pkg metadata members invalid: {names[:2]!r}")
+    payload = names[2:]
+    expected = [abs_install_path(dest) for dest in sorted(files)]
+    if payload != expected:
+        raise SystemExit(
+            "pkg tar payload names must be absolute and match the manifest:\n"
+            f"  got:      {payload!r}\n"
+            f"  expected: {expected!r}"
+        )
 
 
 def write_pkg(pkg_path: Path, manifest: dict, files: dict[str, Path]) -> None:
@@ -234,7 +336,8 @@ def write_pkg(pkg_path: Path, manifest: dict, files: dict[str, Path]) -> None:
         for dest, path in sorted(files.items()):
             add_file(tar, dest, path)
 
-    payload = raw.getvalue()
+    payload = ensure_absolute_payload_names(raw.getvalue())
+    assert_pkg_archive(payload, files)
     pkg_path.parent.mkdir(parents=True, exist_ok=True)
 
     try:

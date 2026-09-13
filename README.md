@@ -2,7 +2,7 @@
 
 # dnstap-bgp
 
-Fork of [blind-oracle/dnstap-bgp](https://github.com/blind-oracle/dnstap-bgp). Current release: **1.2.1**.
+Fork of [blind-oracle/dnstap-bgp](https://github.com/blind-oracle/dnstap-bgp). Current release: **1.2.2**.
 
 Requires **Go 1.27**. BGP is provided by [GoBGP v4](https://github.com/osrg/gobgp).
 
@@ -103,7 +103,7 @@ See the [releases page](https://github.com/ha-harbor-ws/dnstap-bgp/releases).
 ABI: `FreeBSD:15:amd64`.
 
 ```
-pkg add os-dnstap-bgp-1.2.1-opnsense26.7-freebsd15-amd64.pkg
+pkg add os-dnstap-bgp-1.2.2-opnsense26.7-freebsd15-amd64.pkg
 ```
 
 The post-install script copies samples to:
