@@ -12,10 +12,12 @@ import (
 )
 
 type cfgRoot struct {
-	Domains string
-	Cache   string
-	TTL     string
-	IPv6    bool
+	Domains          string `toml:"domains"`
+	BlockedDomains   string `toml:"blocked_domains"`
+	UnblockedDomains string `toml:"unblocked_domains"`
+	Cache            string
+	TTL              string
+	IPv6             bool
 
 	DNSTap *dnstapCfg
 	BGP    *bgpCfg
@@ -53,8 +55,13 @@ func main() {
 	cfg.DNSTap.IPv6 = cfg.IPv6
 	cfg.BGP.IPv6 = cfg.IPv6
 
-	if cfg.Domains == "" {
-		log.Fatal("You need to specify path to a domain list")
+	blockedPath := cfg.BlockedDomains
+	if blockedPath == "" {
+		blockedPath = cfg.Domains
+	}
+	unblockedPath := cfg.UnblockedDomains
+	if blockedPath == "" && unblockedPath == "" {
+		log.Fatal("You need to specify blocked_domains and/or unblocked_domains")
 	}
 
 	ttl := 24 * time.Hour
@@ -65,7 +72,7 @@ func main() {
 	}
 
 	withdraw := func(e *cacheEntry) {
-		bgp.delHost(e.IP)
+		bgp.delHost(e.IP, e.Class)
 
 		if ipDB != nil {
 			ipDB.del(e.IP)
@@ -78,14 +85,13 @@ func main() {
 	}
 
 	ipCache := newCache(ttl, expireCb)
-	dTree := newDomainTree()
-
-	cnt, skip, err := dTree.loadFile(cfg.Domains)
+	dLists, bN, bS, uN, uS, err := loadDomainLists(blockedPath, unblockedPath)
 	if err != nil {
-		log.Fatalf("Unable to load domain list: %s", err)
+		log.Fatalf("Unable to load domain lists: %s", err)
 	}
 
-	log.Printf("Domains loaded: %d, skipped: %d", cnt, skip)
+	log.Printf("Blocked domains loaded: %d, skipped: %d", bN, bS)
+	log.Printf("Unblocked domains loaded: %d, skipped: %d", uN, uS)
 
 	if bgp, err = newBgp(cfg.BGP); err != nil {
 		log.Fatalf("Unable to init BGP: %s", err)
@@ -110,14 +116,16 @@ func main() {
 				continue
 			}
 
-			if !dTree.has(e.Domain) {
+			class, ok := dLists.classOf(e.Domain)
+			if !ok {
 				ipDB.del(e.IP)
 				k++
 				continue
 			}
 
+			e.Class = class
 			ipCache.add(e)
-			bgp.addHost(e.IP)
+			bgp.addHost(e.IP, class)
 			i++
 		}
 
@@ -135,16 +143,30 @@ func main() {
 	}
 
 	addEntry := func(e *cacheEntry, touch bool) bool {
-		if ipCache.exists(e.IP, touch) {
+		if e.Class == "" {
+			if class, ok := dLists.classOf(e.Domain); ok {
+				e.Class = class
+			} else {
+				e.Class = domainBlocked
+			}
+		}
+
+		if prev := ipCache.lookup(e.IP, touch); prev != nil {
 			if touch {
+				ipDBPut(prev)
+			}
+			if prev.Class != e.Class || prev.Domain != e.Domain {
+				log.Printf("%s: %s class %s -> %s", e.Domain, e.IP, prev.Class, e.Class)
+				bgp.delHost(prev.IP, prev.Class)
+				ipCache.add(e)
+				bgp.addHost(e.IP, e.Class)
 				ipDBPut(e)
 			}
-
 			return false
 		}
 
-		log.Printf("%s: %s (from peer: %t)", e.Domain, e.IP, !touch)
-		bgp.addHost(e.IP)
+		log.Printf("%s: %s (%s, from peer: %t)", e.Domain, e.IP, e.Class, !touch)
+		bgp.addHost(e.IP, e.Class)
 		ipCache.add(e)
 		ipDBPut(e)
 
@@ -164,7 +186,8 @@ func main() {
 	}
 
 	addHostCb := func(ip net.IP, domain string) {
-		if !dTree.has(domain) {
+		class, ok := dLists.classOf(domain)
+		if !ok {
 			return
 		}
 
@@ -172,6 +195,7 @@ func main() {
 			IP:     ip,
 			Domain: domain,
 			TS:     time.Now(),
+			Class:  class,
 		}
 
 		addEntry(e, true)
@@ -200,15 +224,17 @@ func main() {
 		for sig := range sigchannel {
 			switch sig {
 			case sigReload:
-				i, s, err := dTree.loadFile(cfg.Domains)
+				tmp, rbN, rbS, ruN, ruS, err := loadDomainLists(blockedPath, unblockedPath)
 				if err != nil {
-					log.Printf("Unable to load file: %s", err)
+					log.Printf("Unable to load domain lists: %s", err)
 					continue
 				}
 
-				log.Printf("Domains loaded: %d, skipped: %d", i, s)
+				dLists.swap(tmp)
+				log.Printf("Blocked domains loaded: %d, skipped: %d", rbN, rbS)
+				log.Printf("Unblocked domains loaded: %d, skipped: %d", ruN, ruS)
 
-				n := ipCache.purgeUnmatched(dTree, func(e *cacheEntry) {
+				n := ipCache.purgeUnmatched(dLists.has, func(e *cacheEntry) {
 					log.Printf("%s (%s) vanished after reload", e.IP, e.Domain)
 					withdraw(e)
 				})
@@ -216,11 +242,24 @@ func main() {
 					log.Printf("Purged after reload: %d", n)
 				}
 
+				for _, e := range ipCache.getAll() {
+					class, ok := dLists.classOf(e.Domain)
+					if !ok || e.Class == class {
+						continue
+					}
+					log.Printf("%s (%s) class %s -> %s after reload", e.IP, e.Domain, e.Class, class)
+					bgp.delHost(e.IP, e.Class)
+					e.Class = class
+					bgp.addHost(e.IP, class)
+					ipDBPut(e)
+				}
+
 			case os.Interrupt, sigTerm:
 				close(shutdown)
 
 			case sigStats:
-				log.Printf("IPs exported: %d, domains loaded: %d", ipCache.count(), dTree.count())
+				log.Printf("IPs exported: %d, blocked domains: %d, unblocked domains: %d",
+					ipCache.count(), dLists.blocked.count(), dLists.unblocked.count())
 			}
 		}
 	}()

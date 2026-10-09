@@ -24,11 +24,73 @@ type bgpCfg struct {
 
 	Peers []string
 	IPv6  bool
+
+	BlockedCommunities   []string `toml:"blocked_communities"`
+	UnblockedCommunities []string `toml:"unblocked_communities"`
+}
+
+type communitySet struct {
+	standard []uint32
+	large    []*bgp.LargeCommunity
+}
+
+func (c *communitySet) empty() bool {
+	return c == nil || (len(c.standard) == 0 && len(c.large) == 0)
+}
+
+func (c *communitySet) attrs() []bgp.PathAttributeInterface {
+	if c.empty() {
+		return nil
+	}
+	var attrs []bgp.PathAttributeInterface
+	if len(c.standard) > 0 {
+		attrs = append(attrs, bgp.NewPathAttributeCommunities(append([]uint32(nil), c.standard...)))
+	}
+	if len(c.large) > 0 {
+		attrs = append(attrs, bgp.NewPathAttributeLargeCommunities(append([]*bgp.LargeCommunity(nil), c.large...)))
+	}
+	return attrs
+}
+
+func parseCommunityList(ss []string) (*communitySet, error) {
+	cs := &communitySet{}
+	for _, raw := range ss {
+		s := strings.TrimSpace(raw)
+		if s == "" {
+			continue
+		}
+		if v, ok := bgp.WellKnownCommunityValueMap[strings.ToLower(s)]; ok {
+			cs.standard = append(cs.standard, uint32(v))
+			continue
+		}
+		parts := strings.Split(s, ":")
+		switch len(parts) {
+		case 2:
+			a, err1 := strconv.ParseUint(parts[0], 10, 16)
+			b, err2 := strconv.ParseUint(parts[1], 10, 16)
+			if err1 != nil || err2 != nil {
+				return nil, fmt.Errorf("invalid community %q (want ASN:VALUE)", s)
+			}
+			cs.standard = append(cs.standard, uint32(a)<<16|uint32(b))
+		case 3:
+			lc, err := bgp.ParseLargeCommunity(s)
+			if err != nil {
+				return nil, fmt.Errorf("invalid large community %q (want ASN:A:B)", s)
+			}
+			cs.large = append(cs.large, lc)
+		default:
+			return nil, fmt.Errorf("invalid community %q (want ASN:VALUE, ASN:A:B, or well-known name)", s)
+		}
+	}
+	return cs, nil
 }
 
 type bgpServer struct {
 	s *gobgp.BgpServer
 	c *bgpCfg
+
+	blockedComm   *communitySet
+	unblockedComm *communitySet
 }
 
 func newBgp(c *bgpCfg) (b *bgpServer, err error) {
@@ -40,9 +102,20 @@ func newBgp(c *bgpCfg) (b *bgpServer, err error) {
 		return nil, fmt.Errorf("you need to provide at least one peer")
 	}
 
+	blockedComm, err := parseCommunityList(c.BlockedCommunities)
+	if err != nil {
+		return nil, fmt.Errorf("blocked_communities: %w", err)
+	}
+	unblockedComm, err := parseCommunityList(c.UnblockedCommunities)
+	if err != nil {
+		return nil, fmt.Errorf("unblocked_communities: %w", err)
+	}
+
 	b = &bgpServer{
-		s: gobgp.NewBgpServer(),
-		c: c,
+		s:             gobgp.NewBgpServer(),
+		c:             c,
+		blockedComm:   blockedComm,
+		unblockedComm: unblockedComm,
 	}
 	go b.s.Serve()
 
@@ -168,7 +241,18 @@ func (b *bgpServer) nextHop(family bgp.Family) (netip.Addr, error) {
 	return addr, nil
 }
 
-func (b *bgpServer) getPath(ip net.IP) (*apiutil.Path, error) {
+func (b *bgpServer) communitiesFor(class domainClass) *communitySet {
+	switch class {
+	case domainBlocked:
+		return b.blockedComm
+	case domainUnblocked:
+		return b.unblockedComm
+	default:
+		return nil
+	}
+}
+
+func (b *bgpServer) getPath(ip net.IP, class domainClass) (*apiutil.Path, error) {
 	prefix, family, err := prefixFromIP(ip)
 	if err != nil {
 		return nil, err
@@ -204,6 +288,8 @@ func (b *bgpServer) getPath(ip net.IP) (*apiutil.Path, error) {
 		attrs = append(attrs, nextHop)
 	}
 
+	attrs = append(attrs, b.communitiesFor(class).attrs()...)
+
 	return &apiutil.Path{
 		Family: family,
 		Nlri:   nlri,
@@ -211,8 +297,8 @@ func (b *bgpServer) getPath(ip net.IP) (*apiutil.Path, error) {
 	}, nil
 }
 
-func (b *bgpServer) addHost(ip net.IP) error {
-	p, err := b.getPath(ip)
+func (b *bgpServer) addHost(ip net.IP, class domainClass) error {
+	p, err := b.getPath(ip, class)
 	if err != nil || p == nil {
 		return err
 	}
@@ -223,8 +309,8 @@ func (b *bgpServer) addHost(ip net.IP) error {
 	return err
 }
 
-func (b *bgpServer) delHost(ip net.IP) error {
-	p, err := b.getPath(ip)
+func (b *bgpServer) delHost(ip net.IP, class domainClass) error {
+	p, err := b.getPath(ip, class)
 	if err != nil || p == nil {
 		return err
 	}

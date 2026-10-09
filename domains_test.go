@@ -72,3 +72,30 @@ func Test_domainTreeSub(t *testing.T) {
 func Test_domainLevel(t *testing.T) {
 	assert.Equal(t, 5, domainLevel("a.b.c.d.e"))
 }
+
+func Test_domainListsClass(t *testing.T) {
+	blocked := "__blocked.txt"
+	unblocked := "__unblocked.txt"
+	err := os.WriteFile(blocked, []byte("evil.example\n"), 0666)
+	assert.Nil(t, err)
+	err = os.WriteFile(unblocked, []byte("good.example\nevil.example\n"), 0666)
+	assert.Nil(t, err)
+	defer os.Remove(blocked)
+	defer os.Remove(unblocked)
+
+	d, bN, _, uN, _, err := loadDomainLists(blocked, unblocked)
+	assert.Nil(t, err)
+	assert.Equal(t, 1, bN)
+	assert.Equal(t, 2, uN)
+
+	class, ok := d.classOf("a.evil.example")
+	assert.True(t, ok)
+	assert.Equal(t, domainBlocked, class)
+
+	class, ok = d.classOf("a.good.example")
+	assert.True(t, ok)
+	assert.Equal(t, domainUnblocked, class)
+
+	_, ok = d.classOf("other.test")
+	assert.False(t, ok)
+}

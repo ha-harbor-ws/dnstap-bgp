@@ -1,6 +1,5 @@
 # OPNsense 26.7 / FreeBSD 15 sample configuration
 # Installed as /usr/local/etc/dnstap-bgp/dnstap-bgp.conf
-# Domain list: /usr/local/etc/dnstap-bgp/domains.txt
 #
 # Enable:
 #   sysrc dnstap_bgp_enable=YES
@@ -11,7 +10,9 @@
 # jail address and set sourceIP/nextHop below to that address.
 
 # One FQDN per line, lowercase. IDN/punycode is not supported.
-domains = "/usr/local/etc/dnstap-bgp/domains.txt"
+# If a name matches both lists, blocked wins.
+blocked_domains = "/usr/local/etc/dnstap-bgp/blocked.txt"
+unblocked_domains = "/usr/local/etc/dnstap-bgp/unblocked.txt"
 
 # BoltDB cache
 cache = "/var/db/dnstap-bgp/cache.db"
@@ -32,6 +33,17 @@ nextHop = "192.168.113.2"
 # FRR/BIRD on the host epair address (see rc.conf.d/dnstap_bgp)
 peers = [
     "192.168.113.1",
+]
+
+# Communities for prefixes resolved from blocked_domains
+# Standard ASN:VALUE, large ASN:A:B, or well-known (no-export, blackhole, ...)
+blocked_communities = [
+    "65000:666",
+]
+
+# Communities for prefixes resolved from unblocked_domains
+unblocked_communities = [
+    "65000:100",
 ]
 
 # Optional HTTP(S) sync. Token is required if this section is enabled.

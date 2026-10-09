@@ -30,7 +30,7 @@ func Test_CachePurgeUnmatched(t *testing.T) {
 	_, _, err := dt.loadList([]string{"example.keep"})
 	assert.Nil(t, err)
 
-	n := c.purgeUnmatched(dt, cb)
+	n := c.purgeUnmatched(dt.has, cb)
 	assert.Equal(t, 1, n)
 	assert.Equal(t, 1, vanished)
 	assert.True(t, c.exists(net.ParseIP("1.1.1.1"), false))

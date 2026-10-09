@@ -2,9 +2,55 @@
 
 # dnstap-bgp
 
-Fork of [blind-oracle/dnstap-bgp](https://github.com/blind-oracle/dnstap-bgp). Current release: **1.2.2**.
+Fork of [blind-oracle/dnstap-bgp](https://github.com/blind-oracle/dnstap-bgp). Current release: **1.3.0**.
 
 Requires **Go 1.27**. BGP is provided by [GoBGP v4](https://github.com/osrg/gobgp).
+
+## Changes from upstream
+
+Compared with [blind-oracle/dnstap-bgp](https://github.com/blind-oracle/dnstap-bgp) (Go 1.19, GoBGP v3). This fork is **1.3.0**.
+
+### Domain lists and BGP communities
+
+| Upstream | This fork |
+| --- | --- |
+| One file: `domains` | Two files: `blocked_domains` and `unblocked_domains` (`domains` remains an alias for blocked) |
+| Routes announced with origin + next-hop only | Each class gets its own communities from config: `blocked_communities` / `unblocked_communities` |
+| HUP reloads the list but leaves stale BGP prefixes | HUP reloads both lists, withdraws vanished IPs, and re-announces if a name moved between blocked and unblocked |
+
+Community values are not hardcoded. Config accepts standard `ASN:VALUE`, large `ASN:A:B`, and well-known names (`no-export`, `blackhole`, `no-advertise`, `no-peer`, …). If a name matches both lists, **blocked** wins.
+
+### Stack
+
+| | Upstream | This fork |
+| --- | --- | --- |
+| Go | 1.19 | 1.27 |
+| GoBGP | v3.13 | **v4.9** (`apiutil.Path`, `netip`, mandatory `Family`) |
+| miekg/dns | 1.1.53 | 1.1.73 |
+| bbolt | 1.3.7 | 1.5.0 |
+| toml | 1.2.1 | 1.6.0 |
+| protobuf | `github.com/golang/protobuf` + proto 1.30 | `google.golang.org/protobuf` 1.36 only |
+
+### Correctness and security
+
+* Domain list file handle is closed after every load (`defer f.Close()`).
+* Syncer requires a shared Bearer `token`; `/fetch` and `/put` reject unauthenticated requests.
+* Optional syncer TLS (`tlsCert` / `tlsKey`); HTTP/2 timeouts and a body size limit on `/put`.
+* Own `http.ServeMux` (upstream registered on the default mux and could panic on `close()` when `listen` was unset).
+* Signals split: `SIGHUP` / `SIGUSR1` on Unix; Windows handles `SIGINT` / `SIGTERM` only.
+
+### OPNsense 26.7 / FreeBSD 15
+
+Upstream ships only Linux systemd + `ip netns`. This fork adds:
+
+* Package `os-dnstap-bgp` (ABI `FreeBSD:15:amd64`)
+* rc.d script `/usr/local/etc/rc.d/dnstap_bgp` that starts in a **VNET jail** (`dtap`) with an epair — the FreeBSD analog of `ip netns`
+* Default paths under `/usr/local/etc/dnstap-bgp/` (see the table below)
+* `dnstap-bgp.service` is documented as Linux-only
+
+### CI
+
+GitHub Actions builds and tests on `master` with Go 1.27 (`actions/checkout@v7`, `actions/setup-go@v7`).
 
 ## Overview
 
@@ -19,8 +65,9 @@ This daemon solves the problem of manipulating traffic based on domain names ins
 
 ## Features
 
-* Load a list of domains to intercept; a prefix tree matches subdomains
-* Hot-reload of the domain list on `SIGHUP`; IPs for removed domains are withdrawn from BGP and dropped from the cache/DB
+* Load separate lists of **blocked** and **unblocked** domains; a prefix tree matches subdomains
+* Announce each class with its own BGP communities from the config (`blocked_communities` / `unblocked_communities`)
+* Hot-reload of the domain lists on `SIGHUP`; IPs for removed domains are withdrawn from BGP and dropped from the cache/DB
 * IPv6 in DNS (AAAA), BGP and syncer
 * CNAMEs are resolved and stored as separate IP → domain entries
 * Export routes to any number of BGP peers
@@ -34,8 +81,8 @@ This daemon solves the problem of manipulating traffic based on domain names ins
 
 | Signal | Action |
 | --- | --- |
-| `SIGHUP` | Reload the domain list and withdraw vanished prefixes |
-| `SIGUSR1` | Log the number of exported IPs and loaded domains |
+| `SIGHUP` | Reload domain lists, withdraw vanished prefixes, re-tag communities if a name changed class |
+| `SIGUSR1` | Log exported IPs and blocked/unblocked domain counts |
 | `SIGTERM` / `SIGINT` | Graceful shutdown |
 
 `SIGHUP` / `SIGUSR1` are Unix-only. On Windows only `SIGINT` / `SIGTERM` are handled.
@@ -49,8 +96,11 @@ This daemon solves the problem of manipulating traffic based on domain names ins
 | Binary | `/usr/local/sbin/dnstap-bgp` |
 | Main config | `/usr/local/etc/dnstap-bgp/dnstap-bgp.conf` |
 | Main config sample | `/usr/local/etc/dnstap-bgp/dnstap-bgp.conf.sample` |
-| **Domain list (default)** | **`/usr/local/etc/dnstap-bgp/domains.txt`** |
-| Domain list sample | `/usr/local/etc/dnstap-bgp/domains.txt.sample` |
+| **Blocked domains** | **`/usr/local/etc/dnstap-bgp/blocked.txt`** |
+| Blocked domains sample | `/usr/local/etc/dnstap-bgp/blocked.txt.sample` |
+| **Unblocked domains** | **`/usr/local/etc/dnstap-bgp/unblocked.txt`** |
+| Unblocked domains sample | `/usr/local/etc/dnstap-bgp/unblocked.txt.sample` |
+| Legacy domain list (alias for blocked) | `/usr/local/etc/dnstap-bgp/domains.txt` |
 | rc.d service | `/usr/local/etc/rc.d/dnstap_bgp` |
 | rc knobs (enable, VNET, epair IPs) | `/usr/local/etc/rc.conf.d/dnstap_bgp` |
 | rc knobs sample | `/usr/local/etc/rc.conf.d/dnstap_bgp.sample` |
@@ -70,7 +120,8 @@ This daemon solves the problem of manipulating traffic based on domain names ins
 | systemd unit | `/usr/lib/systemd/system/dnstap-bgp.service` |
 | systemd environment | `/etc/default/dnstap-bgp` |
 | Main config | `/etc/dnstap-bgp/dnstap-bgp.conf` |
-| Domain list (default in sample) | `/var/cache/domains.txt` |
+| Blocked domains | `/etc/dnstap-bgp/blocked.txt` |
+| Unblocked domains | `/etc/dnstap-bgp/unblocked.txt` |
 | BoltDB cache | `/var/cache/dnstap-bgp.db` |
 | DNSTap UNIX socket | `/tmp/dnstap.sock` |
 | Optional sync TLS cert/key (if you set them) | `/etc/dnstap-bgp/sync.crt`, `/etc/dnstap-bgp/sync.key` |
@@ -103,23 +154,25 @@ See the [releases page](https://github.com/ha-harbor-ws/dnstap-bgp/releases).
 ABI: `FreeBSD:15:amd64`.
 
 ```
-pkg add os-dnstap-bgp-1.2.2-opnsense26.7-freebsd15-amd64.pkg
+pkg add os-dnstap-bgp-1.3.0-opnsense26.7-freebsd15-amd64.pkg
 ```
 
 The post-install script copies samples to:
 
 * `/usr/local/etc/dnstap-bgp/dnstap-bgp.conf`
+* `/usr/local/etc/dnstap-bgp/blocked.txt`
+* `/usr/local/etc/dnstap-bgp/unblocked.txt`
 * `/usr/local/etc/dnstap-bgp/domains.txt`
 * `/usr/local/etc/rc.conf.d/dnstap_bgp`
 
-Edit the domain list and BGP settings, then:
+Edit the domain lists, `blocked_communities` / `unblocked_communities`, and BGP settings, then:
 
 ```
 sysrc dnstap_bgp_enable=YES
 service dnstap_bgp start
 ```
 
-Reload domains: `service dnstap_bgp reload`.
+Reload domain lists: `service dnstap_bgp reload`.
 
 Point Unbound `dnstap-socket-path` (or BIND `dnstap-output`) at `/var/run/dnstap-bgp/dnstap.sock`.
 
@@ -162,6 +215,18 @@ Repo templates:
 
 * Linux: [`deploy/dnstap-bgp.conf`](deploy/dnstap-bgp.conf), [`deploy/dnstap-bgp.service`](deploy/dnstap-bgp.service), [`deploy/dnstap-bgp`](deploy/dnstap-bgp) → `/etc/default/dnstap-bgp`
 * OPNsense: [`deploy/opnsense/dnstap-bgp.conf.sample`](deploy/opnsense/dnstap-bgp.conf.sample), [`deploy/opnsense/rc.d/dnstap_bgp`](deploy/opnsense/rc.d/dnstap_bgp), [`deploy/opnsense/rc.conf.d/dnstap_bgp.sample`](deploy/opnsense/rc.conf.d/dnstap_bgp.sample)
+
+Domain matching uses `blocked_domains` and `unblocked_domains`. The old `domains` key is an alias for `blocked_domains` when the latter is empty. If a name matches both lists, **blocked** wins.
+
+BGP communities are taken from the config, not hardcoded:
+
+```
+[bgp]
+blocked_communities = ["65000:666"]
+unblocked_communities = ["65000:100"]
+```
+
+Each item is a standard community `ASN:VALUE` (16-bit parts), a large community `ASN:A:B`, or a well-known name (`no-export`, `no-advertise`, `blackhole`, `no-peer`, …). Several communities per class are allowed.
 
 If `[syncer]` is enabled, set `token`. `tlsCert` and `tlsKey` must be set together.
 

@@ -10,6 +10,7 @@ type cacheEntry struct {
 	IP     net.IP
 	Domain string
 	TS     time.Time
+	Class  domainClass
 }
 
 type expireFunc func(*cacheEntry)
@@ -47,11 +48,11 @@ func (c *cache) cleanup() {
 	}
 }
 
-func (c *cache) purgeUnmatched(dTree *domainTree, cb expireFunc) int {
+func (c *cache) purgeUnmatched(has func(string) bool, cb expireFunc) int {
 	var removed []*cacheEntry
 	c.Lock()
 	for k, v := range c.m {
-		if !dTree.has(v.Domain) {
+		if !has(v.Domain) {
 			delete(c.m, k)
 			removed = append(removed, v)
 		}
@@ -66,14 +67,21 @@ func (c *cache) purgeUnmatched(dTree *domainTree, cb expireFunc) int {
 	return len(removed)
 }
 
-func (c *cache) exists(ip net.IP, update bool) bool {
+func (c *cache) lookup(ip net.IP, update bool) *cacheEntry {
 	c.Lock()
+	defer c.Unlock()
 	e, ok := c.m[string(ip)]
-	if ok && update {
+	if !ok {
+		return nil
+	}
+	if update {
 		e.TS = time.Now()
 	}
-	c.Unlock()
-	return ok
+	return e
+}
+
+func (c *cache) exists(ip net.IP, update bool) bool {
+	return c.lookup(ip, update) != nil
 }
 
 func (c *cache) add(e *cacheEntry) {

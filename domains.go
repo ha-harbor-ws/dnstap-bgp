@@ -41,10 +41,82 @@ type domainTree struct {
 	sync.RWMutex
 }
 
+type domainClass string
+
+const (
+	domainBlocked   domainClass = "blocked"
+	domainUnblocked domainClass = "unblocked"
+)
+
+type domainLists struct {
+	blocked   *domainTree
+	unblocked *domainTree
+}
+
+func newDomainLists() *domainLists {
+	return &domainLists{
+		blocked:   newDomainTree(),
+		unblocked: newDomainTree(),
+	}
+}
+
+func (d *domainLists) classOf(s string) (domainClass, bool) {
+	if d.blocked.has(s) {
+		return domainBlocked, true
+	}
+	if d.unblocked.has(s) {
+		return domainUnblocked, true
+	}
+	return "", false
+}
+
+func (d *domainLists) has(s string) bool {
+	_, ok := d.classOf(s)
+	return ok
+}
+
+func (d *domainLists) count() int {
+	return d.blocked.count() + d.unblocked.count()
+}
+
+func (d *domainLists) swap(other *domainLists) {
+	d.blocked.Lock()
+	d.blocked.t = other.blocked.t
+	d.blocked.Unlock()
+	d.unblocked.Lock()
+	d.unblocked.t = other.unblocked.t
+	d.unblocked.Unlock()
+}
+
+func loadDomainLists(blockedPath, unblockedPath string) (d *domainLists, bN, bS, uN, uS int, err error) {
+	if blockedPath == "" && unblockedPath == "" {
+		return nil, 0, 0, 0, 0, fmt.Errorf("specify blocked_domains and/or unblocked_domains")
+	}
+
+	d = newDomainLists()
+	if blockedPath != "" {
+		bN, bS, err = d.blocked.loadFile(blockedPath)
+		if err != nil {
+			return nil, 0, 0, 0, 0, fmt.Errorf("blocked domains: %w", err)
+		}
+	}
+	if unblockedPath != "" {
+		uN, uS, err = d.unblocked.loadFile(unblockedPath)
+		if err != nil {
+			return nil, 0, 0, 0, 0, fmt.Errorf("unblocked domains: %w", err)
+		}
+	}
+	return d, bN, bS, uN, uS, nil
+}
+
 func (d *domainTree) has(s string) (ok bool) {
 	dr := domainReverse(s)
 
 	d.RLock()
+	if d.t == nil {
+		d.RUnlock()
+		return false
+	}
 	pfx, _, ok := d.t.LongestPrefix(dr)
 	d.RUnlock()
 
@@ -105,10 +177,6 @@ func (d *domainTree) loadList(domains []string) (i, s int, err error) {
 		i++
 	}
 
-	if t.Len() == 0 {
-		return 0, 0, fmt.Errorf("no domains loaded (%d skipped)", s)
-	}
-
 	d.Lock()
 	d.t = t
 	d.Unlock()
@@ -118,6 +186,9 @@ func (d *domainTree) loadList(domains []string) (i, s int, err error) {
 func (d *domainTree) count() int {
 	d.RLock()
 	defer d.RUnlock()
+	if d.t == nil {
+		return 0
+	}
 	return d.t.Len()
 }
 

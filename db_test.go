@@ -19,6 +19,7 @@ func Test_DB(t *testing.T) {
 		IP:     net.ParseIP("1.2.3.4"),
 		Domain: "test.foo",
 		TS:     time.Now(),
+		Class:  domainBlocked,
 	}
 
 	err = db.add(e)
@@ -28,6 +29,7 @@ func Test_DB(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, ee[0].Domain, e.Domain)
 	assert.Equal(t, ee[0].IP, e.IP)
+	assert.Equal(t, ee[0].Class, e.Class)
 
 	err = db.del(e.IP)
 	assert.Nil(t, err)
