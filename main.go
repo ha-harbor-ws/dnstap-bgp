@@ -15,6 +15,7 @@ type cfgRoot struct {
 	Domains             string `toml:"domains"`
 	ProxyDomains        string `toml:"proxy_domains"`
 	DirectDomains       string `toml:"direct_domains"`
+	BlockDomains        string `toml:"block_domains"`
 	LegacyProxyDomains  string `toml:"blocked_domains"`
 	LegacyDirectDomains string `toml:"unblocked_domains"`
 	Cache               string
@@ -68,8 +69,9 @@ func main() {
 
 	proxyPath := firstNonEmpty(cfg.ProxyDomains, cfg.LegacyProxyDomains, cfg.Domains)
 	directPath := firstNonEmpty(cfg.DirectDomains, cfg.LegacyDirectDomains)
-	if proxyPath == "" && directPath == "" {
-		log.Fatal("You need to specify proxy_domains and/or direct_domains")
+	blockPath := cfg.BlockDomains
+	if proxyPath == "" && directPath == "" && blockPath == "" {
+		log.Fatal("You need to specify proxy_domains, direct_domains and/or block_domains")
 	}
 
 	ttl := 24 * time.Hour
@@ -101,23 +103,25 @@ func main() {
 	}
 
 	ipCache := newCache(ttl, expireCb)
-	dLists, pN, pS, dN, dS, err := loadDomainLists(proxyPath, directPath)
+	dLists, pN, pS, dN, dS, bN, bS, err := loadDomainLists(proxyPath, directPath, blockPath)
 	if err != nil {
 		log.Fatalf("Unable to load domain lists: %s", err)
 	}
 
 	log.Printf("Proxy domains loaded: %d, skipped: %d", pN, pS)
 	log.Printf("Direct domains loaded: %d, skipped: %d", dN, dS)
+	log.Printf("Block domains loaded: %d, skipped: %d", bN, bS)
 
 	if bgp, err = newBgp(cfg.BGP); err != nil {
 		log.Fatalf("Unable to init BGP: %s", err)
 	}
 
-	if bgp.proxyComm.empty() && bgp.directComm.empty() {
+	if bgp.proxyComm.empty() && bgp.directComm.empty() && bgp.blockComm.empty() {
 		log.Printf("Warning: no BGP communities in [bgp]; neighbors will get empty clist")
 	} else {
 		log.Printf("BGP proxy communities: %s", bgp.proxyComm)
 		log.Printf("BGP direct communities: %s", bgp.directComm)
+		log.Printf("BGP block communities: %s", bgp.blockComm)
 	}
 
 	if cfg.Cache != "" {
@@ -251,7 +255,7 @@ func main() {
 		for sig := range sigchannel {
 			switch sig {
 			case sigReload:
-				tmp, rpN, rpS, rdN, rdS, err := loadDomainLists(proxyPath, directPath)
+				tmp, rpN, rpS, rdN, rdS, rbN, rbS, err := loadDomainLists(proxyPath, directPath, blockPath)
 				if err != nil {
 					log.Printf("Unable to load domain lists: %s", err)
 					continue
@@ -260,6 +264,7 @@ func main() {
 				dLists.swap(tmp)
 				log.Printf("Proxy domains loaded: %d, skipped: %d", rpN, rpS)
 				log.Printf("Direct domains loaded: %d, skipped: %d", rdN, rdS)
+				log.Printf("Block domains loaded: %d, skipped: %d", rbN, rbS)
 
 				n := ipCache.purgeUnmatched(dLists.has, func(e *cacheEntry) {
 					log.Printf("%s (%s) vanished after reload", e.IP, e.Domain)
@@ -287,8 +292,8 @@ func main() {
 				close(shutdown)
 
 			case sigStats:
-				log.Printf("IPs exported: %d, proxy domains: %d, direct domains: %d",
-					ipCache.count(), dLists.proxy.count(), dLists.direct.count())
+				log.Printf("IPs exported: %d, proxy domains: %d, direct domains: %d, block domains: %d",
+					ipCache.count(), dLists.proxy.count(), dLists.direct.count(), dLists.block.count())
 			}
 		}
 	}()

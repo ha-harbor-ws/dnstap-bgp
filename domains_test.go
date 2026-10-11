@@ -76,17 +76,22 @@ func Test_domainLevel(t *testing.T) {
 func Test_domainListsClass(t *testing.T) {
 	proxy := "__proxy.txt"
 	direct := "__direct.txt"
-	err := os.WriteFile(proxy, []byte("evil.example\n"), 0666)
+	block := "__block.txt"
+	err := os.WriteFile(proxy, []byte("evil.example\nbad.example\n"), 0666)
 	assert.Nil(t, err)
 	err = os.WriteFile(direct, []byte("good.example\nevil.example\n"), 0666)
 	assert.Nil(t, err)
+	err = os.WriteFile(block, []byte("bad.example\n"), 0666)
+	assert.Nil(t, err)
 	defer os.Remove(proxy)
 	defer os.Remove(direct)
+	defer os.Remove(block)
 
-	d, pN, _, dirN, _, err := loadDomainLists(proxy, direct)
+	d, pN, _, dirN, _, bN, _, err := loadDomainLists(proxy, direct, block)
 	assert.Nil(t, err)
-	assert.Equal(t, 1, pN)
+	assert.Equal(t, 2, pN)
 	assert.Equal(t, 2, dirN)
+	assert.Equal(t, 1, bN)
 
 	class, ok := d.classOf("a.evil.example")
 	assert.True(t, ok)
@@ -95,6 +100,10 @@ func Test_domainListsClass(t *testing.T) {
 	class, ok = d.classOf("a.good.example")
 	assert.True(t, ok)
 	assert.Equal(t, domainDirect, class)
+
+	class, ok = d.classOf("a.bad.example")
+	assert.True(t, ok)
+	assert.Equal(t, domainBlock, class)
 
 	_, ok = d.classOf("other.test")
 	assert.False(t, ok)

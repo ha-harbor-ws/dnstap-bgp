@@ -10,9 +10,10 @@
 # jail address and set sourceIP/nextHop below to that address.
 
 # One FQDN per line, lowercase. IDN/punycode is not supported.
-# If a name matches both lists, proxy wins.
+# If a name matches several lists, priority is block > proxy > direct.
 proxy_domains = "/usr/local/etc/dnstap-bgp/proxy.txt"
 direct_domains = "/usr/local/etc/dnstap-bgp/direct.txt"
+block_domains = "/usr/local/etc/dnstap-bgp/block.txt"
 
 # BoltDB cache
 cache = "/var/db/dnstap-bgp/cache.db"
@@ -44,6 +45,11 @@ proxy_communities = [
 # Communities for prefixes resolved from direct_domains
 direct_communities = [
     "65000:100",
+]
+
+# Communities for prefixes resolved from block_domains
+block_communities = [
+    "65103:888",
 ]
 
 # Optional HTTP(S) sync. Token is required if this section is enabled.

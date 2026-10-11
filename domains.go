@@ -46,6 +46,7 @@ type domainClass string
 const (
 	domainProxy  domainClass = "proxy"
 	domainDirect domainClass = "direct"
+	domainBlock  domainClass = "block"
 )
 
 func normalizeClass(c domainClass) domainClass {
@@ -54,6 +55,8 @@ func normalizeClass(c domainClass) domainClass {
 		return domainProxy
 	case domainDirect, "unblocked":
 		return domainDirect
+	case domainBlock:
+		return domainBlock
 	default:
 		return c
 	}
@@ -62,16 +65,21 @@ func normalizeClass(c domainClass) domainClass {
 type domainLists struct {
 	proxy  *domainTree
 	direct *domainTree
+	block  *domainTree
 }
 
 func newDomainLists() *domainLists {
 	return &domainLists{
 		proxy:  newDomainTree(),
 		direct: newDomainTree(),
+		block:  newDomainTree(),
 	}
 }
 
 func (d *domainLists) classOf(s string) (domainClass, bool) {
+	if d.block.has(s) {
+		return domainBlock, true
+	}
 	if d.proxy.has(s) {
 		return domainProxy, true
 	}
@@ -87,7 +95,7 @@ func (d *domainLists) has(s string) bool {
 }
 
 func (d *domainLists) count() int {
-	return d.proxy.count() + d.direct.count()
+	return d.proxy.count() + d.direct.count() + d.block.count()
 }
 
 func (d *domainLists) swap(other *domainLists) {
@@ -97,27 +105,36 @@ func (d *domainLists) swap(other *domainLists) {
 	d.direct.Lock()
 	d.direct.t = other.direct.t
 	d.direct.Unlock()
+	d.block.Lock()
+	d.block.t = other.block.t
+	d.block.Unlock()
 }
 
-func loadDomainLists(proxyPath, directPath string) (d *domainLists, pN, pS, dN, dS int, err error) {
-	if proxyPath == "" && directPath == "" {
-		return nil, 0, 0, 0, 0, fmt.Errorf("specify proxy_domains and/or direct_domains")
+func loadDomainLists(proxyPath, directPath, blockPath string) (d *domainLists, pN, pS, dN, dS, bN, bS int, err error) {
+	if proxyPath == "" && directPath == "" && blockPath == "" {
+		return nil, 0, 0, 0, 0, 0, 0, fmt.Errorf("specify proxy_domains, direct_domains and/or block_domains")
 	}
 
 	d = newDomainLists()
 	if proxyPath != "" {
 		pN, pS, err = d.proxy.loadFile(proxyPath)
 		if err != nil {
-			return nil, 0, 0, 0, 0, fmt.Errorf("proxy domains: %w", err)
+			return nil, 0, 0, 0, 0, 0, 0, fmt.Errorf("proxy domains: %w", err)
 		}
 	}
 	if directPath != "" {
 		dN, dS, err = d.direct.loadFile(directPath)
 		if err != nil {
-			return nil, 0, 0, 0, 0, fmt.Errorf("direct domains: %w", err)
+			return nil, 0, 0, 0, 0, 0, 0, fmt.Errorf("direct domains: %w", err)
 		}
 	}
-	return d, pN, pS, dN, dS, nil
+	if blockPath != "" {
+		bN, bS, err = d.block.loadFile(blockPath)
+		if err != nil {
+			return nil, 0, 0, 0, 0, 0, 0, fmt.Errorf("block domains: %w", err)
+		}
+	}
+	return d, pN, pS, dN, dS, bN, bS, nil
 }
 
 func (d *domainTree) has(s string) (ok bool) {

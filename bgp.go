@@ -27,6 +27,7 @@ type bgpCfg struct {
 
 	ProxyCommunities         []string `toml:"proxy_communities"`
 	DirectCommunities        []string `toml:"direct_communities"`
+	BlockCommunities         []string `toml:"block_communities"`
 	LegacyBlockedCommunities []string `toml:"blocked_communities"`
 	LegacyDirectCommunities  []string `toml:"unblocked_communities"`
 }
@@ -107,6 +108,7 @@ type bgpServer struct {
 
 	proxyComm  *communitySet
 	directComm *communitySet
+	blockComm  *communitySet
 }
 
 func newBgp(c *bgpCfg) (b *bgpServer, err error) {
@@ -134,12 +136,17 @@ func newBgp(c *bgpCfg) (b *bgpServer, err error) {
 	if err != nil {
 		return nil, fmt.Errorf("direct_communities: %w", err)
 	}
+	blockComm, err := parseCommunityList(c.BlockCommunities)
+	if err != nil {
+		return nil, fmt.Errorf("block_communities: %w", err)
+	}
 
 	b = &bgpServer{
 		s:          gobgp.NewBgpServer(),
 		c:          c,
 		proxyComm:  proxyComm,
 		directComm: directComm,
+		blockComm:  blockComm,
 	}
 	go b.s.Serve()
 
@@ -271,6 +278,8 @@ func (b *bgpServer) communitiesFor(class domainClass) *communitySet {
 		return b.proxyComm
 	case domainDirect:
 		return b.directComm
+	case domainBlock:
+		return b.blockComm
 	default:
 		return nil
 	}

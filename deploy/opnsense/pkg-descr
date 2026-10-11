@@ -6,6 +6,7 @@ Default paths:
   /usr/local/etc/dnstap-bgp/dnstap-bgp.conf
   /usr/local/etc/dnstap-bgp/proxy.txt
   /usr/local/etc/dnstap-bgp/direct.txt
+  /usr/local/etc/dnstap-bgp/block.txt
   /usr/local/etc/dnstap-bgp/domains.txt
   /usr/local/etc/rc.d/dnstap_bgp
   /usr/local/etc/rc.conf.d/dnstap_bgp
@@ -13,8 +14,8 @@ Default paths:
   /var/db/dnstap-bgp/cache.db
   /var/run/dnstap-bgp/dnstap.sock
 
-Proxy and direct domain lists get different BGP communities from
-dnstap-bgp.conf (proxy_communities / direct_communities).
+Proxy, direct and block domain lists get different BGP communities from
+dnstap-bgp.conf (proxy_communities / direct_communities / block_communities).
 
 The service starts in a VNET jail (dtap) by default, the FreeBSD analog
 of Linux ip netns, so FRR/BIRD on the host can peer across an epair

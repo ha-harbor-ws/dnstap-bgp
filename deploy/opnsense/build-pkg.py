@@ -115,6 +115,11 @@ def stage_files(stage: Path, binary: Path) -> dict[str, Path]:
         text=True,
     )
     put(
+        OPNSENSE / "block.txt.sample",
+        f"{PREFIX}/etc/dnstap-bgp/block.txt.sample",
+        text=True,
+    )
+    put(
         OPNSENSE / "rc.conf.d" / "dnstap_bgp.sample",
         f"{PREFIX}/etc/rc.conf.d/dnstap_bgp.sample",
         text=True,
@@ -180,6 +185,10 @@ fi
 if [ ! -f /usr/local/etc/dnstap-bgp/direct.txt ]; then
     cp /usr/local/etc/dnstap-bgp/direct.txt.sample \\
         /usr/local/etc/dnstap-bgp/direct.txt
+fi
+if [ ! -f /usr/local/etc/dnstap-bgp/block.txt ]; then
+    cp /usr/local/etc/dnstap-bgp/block.txt.sample \\
+        /usr/local/etc/dnstap-bgp/block.txt
 fi
 if [ ! -f /usr/local/etc/rc.conf.d/dnstap_bgp ]; then
     cp /usr/local/etc/rc.conf.d/dnstap_bgp.sample \\

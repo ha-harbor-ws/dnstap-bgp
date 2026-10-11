@@ -19,6 +19,7 @@ func Test_BGP(t *testing.T) {
 		},
 		ProxyCommunities:  []string{"65000:666"},
 		DirectCommunities: []string{"65000:100"},
+		BlockCommunities:  []string{"65103:888"},
 	})
 
 	assert.Nil(t, err)
@@ -53,11 +54,14 @@ func Test_getPathCommunities(t *testing.T) {
 	assert.Nil(t, err)
 	direct, err := parseCommunityList([]string{"65000:100"})
 	assert.Nil(t, err)
+	block, err := parseCommunityList([]string{"65103:888"})
+	assert.Nil(t, err)
 
 	b := &bgpServer{
 		c:          &bgpCfg{RouterID: "192.0.2.1", NextHop: "192.0.2.1"},
 		proxyComm:  proxy,
 		directComm: direct,
+		blockComm:  block,
 	}
 
 	p, err := b.getPath(net.ParseIP("192.0.2.8"), domainProxy)
@@ -80,6 +84,16 @@ func Test_getPathCommunities(t *testing.T) {
 		}
 	}
 	assert.Equal(t, []uint32{uint32(65000)<<16 | 100}, found)
+
+	p, err = b.getPath(net.ParseIP("192.0.2.8"), domainBlock)
+	assert.Nil(t, err)
+	found = nil
+	for _, a := range p.Attrs {
+		if c, ok := a.(*bgp.PathAttributeCommunities); ok {
+			found = c.Value
+		}
+	}
+	assert.Equal(t, []uint32{uint32(65103)<<16 | 888}, found)
 }
 
 func Test_getPathEmptyASPathHasNoSegments(t *testing.T) {
@@ -108,6 +122,7 @@ func Test_addHostCommunitiesInRIB(t *testing.T) {
 		Peers:                []string{"127.0.0.1"},
 		ProxyCommunities:  []string{"65103:777"},
 		DirectCommunities: []string{"65000:100"},
+		BlockCommunities:  []string{"65103:888"},
 	})
 	assert.Nil(t, err)
 	defer b.close()
