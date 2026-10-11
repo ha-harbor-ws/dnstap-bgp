@@ -38,6 +38,20 @@ func (c *communitySet) empty() bool {
 	return c == nil || (len(c.standard) == 0 && len(c.large) == 0)
 }
 
+func (c *communitySet) String() string {
+	if c.empty() {
+		return "(none)"
+	}
+	parts := make([]string, 0, len(c.standard)+len(c.large))
+	for _, v := range c.standard {
+		parts = append(parts, fmt.Sprintf("%d:%d", v>>16, v&0xffff))
+	}
+	for _, lc := range c.large {
+		parts = append(parts, lc.String())
+	}
+	return strings.Join(parts, " ")
+}
+
 func (c *communitySet) attrs() []bgp.PathAttributeInterface {
 	if c.empty() {
 		return nil
@@ -272,7 +286,10 @@ func (b *bgpServer) getPath(ip net.IP, class domainClass) (*apiutil.Path, error)
 	}
 
 	origin := bgp.NewPathAttributeOrigin(0)
-	attrs := []bgp.PathAttributeInterface{origin}
+	aspath := bgp.NewPathAttributeAsPath([]bgp.AsPathParamInterface{
+		bgp.NewAs4PathParam(bgp.BGP_ASPATH_ATTR_TYPE_SEQ, []uint32{}),
+	})
+	attrs := []bgp.PathAttributeInterface{origin, aspath}
 
 	if family == bgp.RF_IPv6_UC {
 		mp, err := bgp.NewPathAttributeMpReachNLRI(family, []bgp.PathNLRI{{NLRI: nlri}}, nh)

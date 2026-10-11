@@ -4,6 +4,8 @@ import (
 	"net"
 	"testing"
 
+	api "github.com/osrg/gobgp/v4/api"
+	"github.com/osrg/gobgp/v4/pkg/apiutil"
 	"github.com/osrg/gobgp/v4/pkg/packet/bgp"
 	"github.com/stretchr/testify/assert"
 )
@@ -41,6 +43,9 @@ func Test_parseCommunityList(t *testing.T) {
 
 	_, err = parseCommunityList([]string{"not-a-community"})
 	assert.Error(t, err)
+
+	assert.Equal(t, "65000:666 65535:65281 65000:1:2", cs.String())
+	assert.Equal(t, "(none)", (*communitySet)(nil).String())
 }
 
 func Test_getPathCommunities(t *testing.T) {
@@ -75,4 +80,39 @@ func Test_getPathCommunities(t *testing.T) {
 		}
 	}
 	assert.Equal(t, []uint32{uint32(65000)<<16 | 100}, found)
+}
+
+func Test_addHostCommunitiesInRIB(t *testing.T) {
+	b, err := newBgp(&bgpCfg{
+		AS:                   65000,
+		RouterID:             "127.0.0.1",
+		NextHop:              "127.0.0.1",
+		Peers:                []string{"127.0.0.1"},
+		BlockedCommunities:   []string{"65103:777"},
+		UnblockedCommunities: []string{"65000:100"},
+	})
+	assert.Nil(t, err)
+	defer b.close()
+
+	ip := net.ParseIP("192.0.2.8")
+	assert.Nil(t, b.addHost(ip, domainBlocked))
+
+	want := uint32(65103)<<16 | 777
+	found := false
+	err = b.s.ListPath(apiutil.ListPathRequest{
+		TableType: api.TableType_TABLE_TYPE_GLOBAL,
+		Family:    bgp.RF_IPv4_UC,
+	}, func(_ bgp.NLRI, paths []*apiutil.Path) {
+		for _, p := range paths {
+			for _, a := range p.Attrs {
+				if c, ok := a.(*bgp.PathAttributeCommunities); ok {
+					if len(c.Value) == 1 && c.Value[0] == want {
+						found = true
+					}
+				}
+			}
+		}
+	})
+	assert.Nil(t, err)
+	assert.True(t, found, "global RIB must keep standard community 65103:777")
 }

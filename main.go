@@ -71,8 +71,16 @@ func main() {
 		}
 	}
 
+	announce := func(ip net.IP, class domainClass) {
+		if err := bgp.addHost(ip, class); err != nil {
+			log.Printf("Unable to announce %s (%s): %s", ip, class, err)
+		}
+	}
+
 	withdraw := func(e *cacheEntry) {
-		bgp.delHost(e.IP, e.Class)
+		if err := bgp.delHost(e.IP, e.Class); err != nil {
+			log.Printf("Unable to withdraw %s (%s): %s", e.IP, e.Class, err)
+		}
 
 		if ipDB != nil {
 			ipDB.del(e.IP)
@@ -95,6 +103,13 @@ func main() {
 
 	if bgp, err = newBgp(cfg.BGP); err != nil {
 		log.Fatalf("Unable to init BGP: %s", err)
+	}
+
+	if bgp.blockedComm.empty() && bgp.unblockedComm.empty() {
+		log.Printf("Warning: no BGP communities in [bgp]; neighbors will get empty clist")
+	} else {
+		log.Printf("BGP blocked communities: %s", bgp.blockedComm)
+		log.Printf("BGP unblocked communities: %s", bgp.unblockedComm)
 	}
 
 	if cfg.Cache != "" {
@@ -125,7 +140,7 @@ func main() {
 
 			e.Class = class
 			ipCache.add(e)
-			bgp.addHost(e.IP, class)
+			announce(e.IP, class)
 			i++
 		}
 
@@ -157,16 +172,18 @@ func main() {
 			}
 			if prev.Class != e.Class || prev.Domain != e.Domain {
 				log.Printf("%s: %s class %s -> %s", e.Domain, e.IP, prev.Class, e.Class)
-				bgp.delHost(prev.IP, prev.Class)
+				if err := bgp.delHost(prev.IP, prev.Class); err != nil {
+					log.Printf("Unable to withdraw %s (%s): %s", prev.IP, prev.Class, err)
+				}
 				ipCache.add(e)
-				bgp.addHost(e.IP, e.Class)
+				announce(e.IP, e.Class)
 				ipDBPut(e)
 			}
 			return false
 		}
 
 		log.Printf("%s: %s (%s, from peer: %t)", e.Domain, e.IP, e.Class, !touch)
-		bgp.addHost(e.IP, e.Class)
+		announce(e.IP, e.Class)
 		ipCache.add(e)
 		ipDBPut(e)
 
@@ -248,9 +265,11 @@ func main() {
 						continue
 					}
 					log.Printf("%s (%s) class %s -> %s after reload", e.IP, e.Domain, e.Class, class)
-					bgp.delHost(e.IP, e.Class)
+					if err := bgp.delHost(e.IP, e.Class); err != nil {
+						log.Printf("Unable to withdraw %s (%s): %s", e.IP, e.Class, err)
+					}
 					e.Class = class
-					bgp.addHost(e.IP, class)
+					announce(e.IP, class)
 					ipDBPut(e)
 				}
 
