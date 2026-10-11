@@ -105,13 +105,13 @@ def stage_files(stage: Path, binary: Path) -> dict[str, Path]:
         text=True,
     )
     put(
-        OPNSENSE / "blocked.txt.sample",
-        f"{PREFIX}/etc/dnstap-bgp/blocked.txt.sample",
+        OPNSENSE / "proxy.txt.sample",
+        f"{PREFIX}/etc/dnstap-bgp/proxy.txt.sample",
         text=True,
     )
     put(
-        OPNSENSE / "unblocked.txt.sample",
-        f"{PREFIX}/etc/dnstap-bgp/unblocked.txt.sample",
+        OPNSENSE / "direct.txt.sample",
+        f"{PREFIX}/etc/dnstap-bgp/direct.txt.sample",
         text=True,
     )
     put(
@@ -156,13 +156,30 @@ if [ ! -f /usr/local/etc/dnstap-bgp/domains.txt ]; then
     cp /usr/local/etc/dnstap-bgp/domains.txt.sample \\
         /usr/local/etc/dnstap-bgp/domains.txt
 fi
-if [ ! -f /usr/local/etc/dnstap-bgp/blocked.txt ]; then
-    cp /usr/local/etc/dnstap-bgp/blocked.txt.sample \\
-        /usr/local/etc/dnstap-bgp/blocked.txt
+if [ -f /usr/local/etc/dnstap-bgp/blocked.txt ] && [ ! -f /usr/local/etc/dnstap-bgp/proxy.txt ]; then
+    mv /usr/local/etc/dnstap-bgp/blocked.txt /usr/local/etc/dnstap-bgp/proxy.txt
 fi
-if [ ! -f /usr/local/etc/dnstap-bgp/unblocked.txt ]; then
-    cp /usr/local/etc/dnstap-bgp/unblocked.txt.sample \\
-        /usr/local/etc/dnstap-bgp/unblocked.txt
+if [ -f /usr/local/etc/dnstap-bgp/unblocked.txt ] && [ ! -f /usr/local/etc/dnstap-bgp/direct.txt ]; then
+    mv /usr/local/etc/dnstap-bgp/unblocked.txt /usr/local/etc/dnstap-bgp/direct.txt
+fi
+if [ -f /usr/local/etc/dnstap-bgp/dnstap-bgp.conf ]; then
+    sed -i.bak \\
+        -e 's/blocked_domains/proxy_domains/g' \\
+        -e 's/unblocked_domains/direct_domains/g' \\
+        -e 's/blocked_communities/proxy_communities/g' \\
+        -e 's/unblocked_communities/direct_communities/g' \\
+        -e 's|/blocked.txt|/proxy.txt|g' \\
+        -e 's|/unblocked.txt|/direct.txt|g' \\
+        /usr/local/etc/dnstap-bgp/dnstap-bgp.conf
+    rm -f /usr/local/etc/dnstap-bgp/dnstap-bgp.conf.bak
+fi
+if [ ! -f /usr/local/etc/dnstap-bgp/proxy.txt ]; then
+    cp /usr/local/etc/dnstap-bgp/proxy.txt.sample \\
+        /usr/local/etc/dnstap-bgp/proxy.txt
+fi
+if [ ! -f /usr/local/etc/dnstap-bgp/direct.txt ]; then
+    cp /usr/local/etc/dnstap-bgp/direct.txt.sample \\
+        /usr/local/etc/dnstap-bgp/direct.txt
 fi
 if [ ! -f /usr/local/etc/rc.conf.d/dnstap_bgp ]; then
     cp /usr/local/etc/rc.conf.d/dnstap_bgp.sample \\

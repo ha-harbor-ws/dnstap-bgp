@@ -44,28 +44,39 @@ type domainTree struct {
 type domainClass string
 
 const (
-	domainBlocked   domainClass = "blocked"
-	domainUnblocked domainClass = "unblocked"
+	domainProxy  domainClass = "proxy"
+	domainDirect domainClass = "direct"
 )
 
+func normalizeClass(c domainClass) domainClass {
+	switch c {
+	case domainProxy, "blocked":
+		return domainProxy
+	case domainDirect, "unblocked":
+		return domainDirect
+	default:
+		return c
+	}
+}
+
 type domainLists struct {
-	blocked   *domainTree
-	unblocked *domainTree
+	proxy  *domainTree
+	direct *domainTree
 }
 
 func newDomainLists() *domainLists {
 	return &domainLists{
-		blocked:   newDomainTree(),
-		unblocked: newDomainTree(),
+		proxy:  newDomainTree(),
+		direct: newDomainTree(),
 	}
 }
 
 func (d *domainLists) classOf(s string) (domainClass, bool) {
-	if d.blocked.has(s) {
-		return domainBlocked, true
+	if d.proxy.has(s) {
+		return domainProxy, true
 	}
-	if d.unblocked.has(s) {
-		return domainUnblocked, true
+	if d.direct.has(s) {
+		return domainDirect, true
 	}
 	return "", false
 }
@@ -76,37 +87,37 @@ func (d *domainLists) has(s string) bool {
 }
 
 func (d *domainLists) count() int {
-	return d.blocked.count() + d.unblocked.count()
+	return d.proxy.count() + d.direct.count()
 }
 
 func (d *domainLists) swap(other *domainLists) {
-	d.blocked.Lock()
-	d.blocked.t = other.blocked.t
-	d.blocked.Unlock()
-	d.unblocked.Lock()
-	d.unblocked.t = other.unblocked.t
-	d.unblocked.Unlock()
+	d.proxy.Lock()
+	d.proxy.t = other.proxy.t
+	d.proxy.Unlock()
+	d.direct.Lock()
+	d.direct.t = other.direct.t
+	d.direct.Unlock()
 }
 
-func loadDomainLists(blockedPath, unblockedPath string) (d *domainLists, bN, bS, uN, uS int, err error) {
-	if blockedPath == "" && unblockedPath == "" {
-		return nil, 0, 0, 0, 0, fmt.Errorf("specify blocked_domains and/or unblocked_domains")
+func loadDomainLists(proxyPath, directPath string) (d *domainLists, pN, pS, dN, dS int, err error) {
+	if proxyPath == "" && directPath == "" {
+		return nil, 0, 0, 0, 0, fmt.Errorf("specify proxy_domains and/or direct_domains")
 	}
 
 	d = newDomainLists()
-	if blockedPath != "" {
-		bN, bS, err = d.blocked.loadFile(blockedPath)
+	if proxyPath != "" {
+		pN, pS, err = d.proxy.loadFile(proxyPath)
 		if err != nil {
-			return nil, 0, 0, 0, 0, fmt.Errorf("blocked domains: %w", err)
+			return nil, 0, 0, 0, 0, fmt.Errorf("proxy domains: %w", err)
 		}
 	}
-	if unblockedPath != "" {
-		uN, uS, err = d.unblocked.loadFile(unblockedPath)
+	if directPath != "" {
+		dN, dS, err = d.direct.loadFile(directPath)
 		if err != nil {
-			return nil, 0, 0, 0, 0, fmt.Errorf("unblocked domains: %w", err)
+			return nil, 0, 0, 0, 0, fmt.Errorf("direct domains: %w", err)
 		}
 	}
-	return d, bN, bS, uN, uS, nil
+	return d, pN, pS, dN, dS, nil
 }
 
 func (d *domainTree) has(s string) (ok bool) {

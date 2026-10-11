@@ -12,12 +12,14 @@ import (
 )
 
 type cfgRoot struct {
-	Domains          string `toml:"domains"`
-	BlockedDomains   string `toml:"blocked_domains"`
-	UnblockedDomains string `toml:"unblocked_domains"`
-	Cache            string
-	TTL              string
-	IPv6             bool
+	Domains             string `toml:"domains"`
+	ProxyDomains        string `toml:"proxy_domains"`
+	DirectDomains       string `toml:"direct_domains"`
+	LegacyProxyDomains  string `toml:"blocked_domains"`
+	LegacyDirectDomains string `toml:"unblocked_domains"`
+	Cache               string
+	TTL                 string
+	IPv6                bool
 
 	DNSTap *dnstapCfg
 	BGP    *bgpCfg
@@ -27,6 +29,15 @@ type cfgRoot struct {
 var (
 	version string
 )
+
+func firstNonEmpty(ss ...string) string {
+	for _, s := range ss {
+		if s != "" {
+			return s
+		}
+	}
+	return ""
+}
 
 func main() {
 	var (
@@ -55,13 +66,10 @@ func main() {
 	cfg.DNSTap.IPv6 = cfg.IPv6
 	cfg.BGP.IPv6 = cfg.IPv6
 
-	blockedPath := cfg.BlockedDomains
-	if blockedPath == "" {
-		blockedPath = cfg.Domains
-	}
-	unblockedPath := cfg.UnblockedDomains
-	if blockedPath == "" && unblockedPath == "" {
-		log.Fatal("You need to specify blocked_domains and/or unblocked_domains")
+	proxyPath := firstNonEmpty(cfg.ProxyDomains, cfg.LegacyProxyDomains, cfg.Domains)
+	directPath := firstNonEmpty(cfg.DirectDomains, cfg.LegacyDirectDomains)
+	if proxyPath == "" && directPath == "" {
+		log.Fatal("You need to specify proxy_domains and/or direct_domains")
 	}
 
 	ttl := 24 * time.Hour
@@ -93,23 +101,23 @@ func main() {
 	}
 
 	ipCache := newCache(ttl, expireCb)
-	dLists, bN, bS, uN, uS, err := loadDomainLists(blockedPath, unblockedPath)
+	dLists, pN, pS, dN, dS, err := loadDomainLists(proxyPath, directPath)
 	if err != nil {
 		log.Fatalf("Unable to load domain lists: %s", err)
 	}
 
-	log.Printf("Blocked domains loaded: %d, skipped: %d", bN, bS)
-	log.Printf("Unblocked domains loaded: %d, skipped: %d", uN, uS)
+	log.Printf("Proxy domains loaded: %d, skipped: %d", pN, pS)
+	log.Printf("Direct domains loaded: %d, skipped: %d", dN, dS)
 
 	if bgp, err = newBgp(cfg.BGP); err != nil {
 		log.Fatalf("Unable to init BGP: %s", err)
 	}
 
-	if bgp.blockedComm.empty() && bgp.unblockedComm.empty() {
+	if bgp.proxyComm.empty() && bgp.directComm.empty() {
 		log.Printf("Warning: no BGP communities in [bgp]; neighbors will get empty clist")
 	} else {
-		log.Printf("BGP blocked communities: %s", bgp.blockedComm)
-		log.Printf("BGP unblocked communities: %s", bgp.unblockedComm)
+		log.Printf("BGP proxy communities: %s", bgp.proxyComm)
+		log.Printf("BGP direct communities: %s", bgp.directComm)
 	}
 
 	if cfg.Cache != "" {
@@ -162,8 +170,10 @@ func main() {
 			if class, ok := dLists.classOf(e.Domain); ok {
 				e.Class = class
 			} else {
-				e.Class = domainBlocked
+				e.Class = domainProxy
 			}
+		} else {
+			e.Class = normalizeClass(e.Class)
 		}
 
 		if prev := ipCache.lookup(e.IP, touch); prev != nil {
@@ -241,15 +251,15 @@ func main() {
 		for sig := range sigchannel {
 			switch sig {
 			case sigReload:
-				tmp, rbN, rbS, ruN, ruS, err := loadDomainLists(blockedPath, unblockedPath)
+				tmp, rpN, rpS, rdN, rdS, err := loadDomainLists(proxyPath, directPath)
 				if err != nil {
 					log.Printf("Unable to load domain lists: %s", err)
 					continue
 				}
 
 				dLists.swap(tmp)
-				log.Printf("Blocked domains loaded: %d, skipped: %d", rbN, rbS)
-				log.Printf("Unblocked domains loaded: %d, skipped: %d", ruN, ruS)
+				log.Printf("Proxy domains loaded: %d, skipped: %d", rpN, rpS)
+				log.Printf("Direct domains loaded: %d, skipped: %d", rdN, rdS)
 
 				n := ipCache.purgeUnmatched(dLists.has, func(e *cacheEntry) {
 					log.Printf("%s (%s) vanished after reload", e.IP, e.Domain)
@@ -277,8 +287,8 @@ func main() {
 				close(shutdown)
 
 			case sigStats:
-				log.Printf("IPs exported: %d, blocked domains: %d, unblocked domains: %d",
-					ipCache.count(), dLists.blocked.count(), dLists.unblocked.count())
+				log.Printf("IPs exported: %d, proxy domains: %d, direct domains: %d",
+					ipCache.count(), dLists.proxy.count(), dLists.direct.count())
 			}
 		}
 	}()

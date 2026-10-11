@@ -4,8 +4,8 @@ to steer traffic by domain name instead of static prefixes.
 
 Default paths:
   /usr/local/etc/dnstap-bgp/dnstap-bgp.conf
-  /usr/local/etc/dnstap-bgp/blocked.txt
-  /usr/local/etc/dnstap-bgp/unblocked.txt
+  /usr/local/etc/dnstap-bgp/proxy.txt
+  /usr/local/etc/dnstap-bgp/direct.txt
   /usr/local/etc/dnstap-bgp/domains.txt
   /usr/local/etc/rc.d/dnstap_bgp
   /usr/local/etc/rc.conf.d/dnstap_bgp
@@ -13,8 +13,8 @@ Default paths:
   /var/db/dnstap-bgp/cache.db
   /var/run/dnstap-bgp/dnstap.sock
 
-Blocked and unblocked domain lists get different BGP communities from
-dnstap-bgp.conf (blocked_communities / unblocked_communities).
+Proxy and direct domain lists get different BGP communities from
+dnstap-bgp.conf (proxy_communities / direct_communities).
 
 The service starts in a VNET jail (dtap) by default, the FreeBSD analog
 of Linux ip netns, so FRR/BIRD on the host can peer across an epair

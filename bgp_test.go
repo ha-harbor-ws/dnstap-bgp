@@ -17,15 +17,15 @@ func Test_BGP(t *testing.T) {
 		Peers: []string{
 			"127.0.0.1",
 		},
-		BlockedCommunities:   []string{"65000:666"},
-		UnblockedCommunities: []string{"65000:100"},
+		ProxyCommunities:  []string{"65000:666"},
+		DirectCommunities: []string{"65000:100"},
 	})
 
 	assert.Nil(t, err)
-	err = b.addHost(net.ParseIP("1.2.3.4"), domainBlocked)
+	err = b.addHost(net.ParseIP("1.2.3.4"), domainProxy)
 	assert.Nil(t, err)
 
-	err = b.delHost(net.ParseIP("1.2.3.4"), domainBlocked)
+	err = b.delHost(net.ParseIP("1.2.3.4"), domainProxy)
 	assert.Nil(t, err)
 
 	err = b.close()
@@ -49,18 +49,18 @@ func Test_parseCommunityList(t *testing.T) {
 }
 
 func Test_getPathCommunities(t *testing.T) {
-	blocked, err := parseCommunityList([]string{"65000:666"})
+	proxy, err := parseCommunityList([]string{"65000:666"})
 	assert.Nil(t, err)
-	unblocked, err := parseCommunityList([]string{"65000:100"})
+	direct, err := parseCommunityList([]string{"65000:100"})
 	assert.Nil(t, err)
 
 	b := &bgpServer{
-		c:             &bgpCfg{RouterID: "192.0.2.1", NextHop: "192.0.2.1"},
-		blockedComm:   blocked,
-		unblockedComm: unblocked,
+		c:          &bgpCfg{RouterID: "192.0.2.1", NextHop: "192.0.2.1"},
+		proxyComm:  proxy,
+		directComm: direct,
 	}
 
-	p, err := b.getPath(net.ParseIP("192.0.2.8"), domainBlocked)
+	p, err := b.getPath(net.ParseIP("192.0.2.8"), domainProxy)
 	assert.Nil(t, err)
 
 	var found []uint32
@@ -71,7 +71,7 @@ func Test_getPathCommunities(t *testing.T) {
 	}
 	assert.Equal(t, []uint32{uint32(65000)<<16 | 666}, found)
 
-	p, err = b.getPath(net.ParseIP("192.0.2.8"), domainUnblocked)
+	p, err = b.getPath(net.ParseIP("192.0.2.8"), domainDirect)
 	assert.Nil(t, err)
 	found = nil
 	for _, a := range p.Attrs {
@@ -85,9 +85,9 @@ func Test_getPathCommunities(t *testing.T) {
 func Test_getPathEmptyASPathHasNoSegments(t *testing.T) {
 	b := &bgpServer{
 		c:           &bgpCfg{RouterID: "192.0.2.1", NextHop: "192.0.2.1"},
-		blockedComm: &communitySet{},
+		proxyComm: &communitySet{},
 	}
-	p, err := b.getPath(net.ParseIP("192.0.2.8"), domainBlocked)
+	p, err := b.getPath(net.ParseIP("192.0.2.8"), domainProxy)
 	assert.Nil(t, err)
 
 	var aspath *bgp.PathAttributeAsPath
@@ -106,14 +106,14 @@ func Test_addHostCommunitiesInRIB(t *testing.T) {
 		RouterID:             "127.0.0.1",
 		NextHop:              "127.0.0.1",
 		Peers:                []string{"127.0.0.1"},
-		BlockedCommunities:   []string{"65103:777"},
-		UnblockedCommunities: []string{"65000:100"},
+		ProxyCommunities:  []string{"65103:777"},
+		DirectCommunities: []string{"65000:100"},
 	})
 	assert.Nil(t, err)
 	defer b.close()
 
 	ip := net.ParseIP("192.0.2.8")
-	assert.Nil(t, b.addHost(ip, domainBlocked))
+	assert.Nil(t, b.addHost(ip, domainProxy))
 
 	want := uint32(65103)<<16 | 777
 	found := false

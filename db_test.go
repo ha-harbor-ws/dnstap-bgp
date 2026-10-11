@@ -19,7 +19,7 @@ func Test_DB(t *testing.T) {
 		IP:     net.ParseIP("1.2.3.4"),
 		Domain: "test.foo",
 		TS:     time.Now(),
-		Class:  domainBlocked,
+		Class:  domainProxy,
 	}
 
 	err = db.add(e)

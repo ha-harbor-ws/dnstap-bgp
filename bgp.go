@@ -25,8 +25,10 @@ type bgpCfg struct {
 	Peers []string
 	IPv6  bool
 
-	BlockedCommunities   []string `toml:"blocked_communities"`
-	UnblockedCommunities []string `toml:"unblocked_communities"`
+	ProxyCommunities         []string `toml:"proxy_communities"`
+	DirectCommunities        []string `toml:"direct_communities"`
+	LegacyBlockedCommunities []string `toml:"blocked_communities"`
+	LegacyDirectCommunities  []string `toml:"unblocked_communities"`
 }
 
 type communitySet struct {
@@ -103,8 +105,8 @@ type bgpServer struct {
 	s *gobgp.BgpServer
 	c *bgpCfg
 
-	blockedComm   *communitySet
-	unblockedComm *communitySet
+	proxyComm  *communitySet
+	directComm *communitySet
 }
 
 func newBgp(c *bgpCfg) (b *bgpServer, err error) {
@@ -116,20 +118,28 @@ func newBgp(c *bgpCfg) (b *bgpServer, err error) {
 		return nil, fmt.Errorf("you need to provide at least one peer")
 	}
 
-	blockedComm, err := parseCommunityList(c.BlockedCommunities)
-	if err != nil {
-		return nil, fmt.Errorf("blocked_communities: %w", err)
+	proxyList := c.ProxyCommunities
+	if len(proxyList) == 0 {
+		proxyList = c.LegacyBlockedCommunities
 	}
-	unblockedComm, err := parseCommunityList(c.UnblockedCommunities)
+	directList := c.DirectCommunities
+	if len(directList) == 0 {
+		directList = c.LegacyDirectCommunities
+	}
+	proxyComm, err := parseCommunityList(proxyList)
 	if err != nil {
-		return nil, fmt.Errorf("unblocked_communities: %w", err)
+		return nil, fmt.Errorf("proxy_communities: %w", err)
+	}
+	directComm, err := parseCommunityList(directList)
+	if err != nil {
+		return nil, fmt.Errorf("direct_communities: %w", err)
 	}
 
 	b = &bgpServer{
-		s:             gobgp.NewBgpServer(),
-		c:             c,
-		blockedComm:   blockedComm,
-		unblockedComm: unblockedComm,
+		s:          gobgp.NewBgpServer(),
+		c:          c,
+		proxyComm:  proxyComm,
+		directComm: directComm,
 	}
 	go b.s.Serve()
 
@@ -256,11 +266,11 @@ func (b *bgpServer) nextHop(family bgp.Family) (netip.Addr, error) {
 }
 
 func (b *bgpServer) communitiesFor(class domainClass) *communitySet {
-	switch class {
-	case domainBlocked:
-		return b.blockedComm
-	case domainUnblocked:
-		return b.unblockedComm
+	switch normalizeClass(class) {
+	case domainProxy:
+		return b.proxyComm
+	case domainDirect:
+		return b.directComm
 	default:
 		return nil
 	}

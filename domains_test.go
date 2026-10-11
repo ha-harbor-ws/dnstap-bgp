@@ -74,27 +74,27 @@ func Test_domainLevel(t *testing.T) {
 }
 
 func Test_domainListsClass(t *testing.T) {
-	blocked := "__blocked.txt"
-	unblocked := "__unblocked.txt"
-	err := os.WriteFile(blocked, []byte("evil.example\n"), 0666)
+	proxy := "__proxy.txt"
+	direct := "__direct.txt"
+	err := os.WriteFile(proxy, []byte("evil.example\n"), 0666)
 	assert.Nil(t, err)
-	err = os.WriteFile(unblocked, []byte("good.example\nevil.example\n"), 0666)
+	err = os.WriteFile(direct, []byte("good.example\nevil.example\n"), 0666)
 	assert.Nil(t, err)
-	defer os.Remove(blocked)
-	defer os.Remove(unblocked)
+	defer os.Remove(proxy)
+	defer os.Remove(direct)
 
-	d, bN, _, uN, _, err := loadDomainLists(blocked, unblocked)
+	d, pN, _, dirN, _, err := loadDomainLists(proxy, direct)
 	assert.Nil(t, err)
-	assert.Equal(t, 1, bN)
-	assert.Equal(t, 2, uN)
+	assert.Equal(t, 1, pN)
+	assert.Equal(t, 2, dirN)
 
 	class, ok := d.classOf("a.evil.example")
 	assert.True(t, ok)
-	assert.Equal(t, domainBlocked, class)
+	assert.Equal(t, domainProxy, class)
 
 	class, ok = d.classOf("a.good.example")
 	assert.True(t, ok)
-	assert.Equal(t, domainUnblocked, class)
+	assert.Equal(t, domainDirect, class)
 
 	_, ok = d.classOf("other.test")
 	assert.False(t, ok)

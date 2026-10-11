@@ -10,9 +10,9 @@
 # jail address and set sourceIP/nextHop below to that address.
 
 # One FQDN per line, lowercase. IDN/punycode is not supported.
-# If a name matches both lists, blocked wins.
-blocked_domains = "/usr/local/etc/dnstap-bgp/blocked.txt"
-unblocked_domains = "/usr/local/etc/dnstap-bgp/unblocked.txt"
+# If a name matches both lists, proxy wins.
+proxy_domains = "/usr/local/etc/dnstap-bgp/proxy.txt"
+direct_domains = "/usr/local/etc/dnstap-bgp/direct.txt"
 
 # BoltDB cache
 cache = "/var/db/dnstap-bgp/cache.db"
@@ -35,14 +35,14 @@ peers = [
     "192.168.113.1",
 ]
 
-# Communities for prefixes resolved from blocked_domains
+# Communities for prefixes resolved from proxy_domains
 # Standard ASN:VALUE, large ASN:A:B, or well-known (no-export, blackhole, ...)
-blocked_communities = [
+proxy_communities = [
     "65000:666",
 ]
 
-# Communities for prefixes resolved from unblocked_domains
-unblocked_communities = [
+# Communities for prefixes resolved from direct_domains
+direct_communities = [
     "65000:100",
 ]
 

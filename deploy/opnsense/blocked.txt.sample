@@ -1,2 +1,2 @@
-# Blocked domains: one lowercase FQDN per line. IDN/punycode is not supported.
-# example-blocked.com
+# Renamed to proxy.txt.sample (PROXY domains).
+# PROXY domains: one lowercase FQDN per line. IDN/punycode is not supported.
