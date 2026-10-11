@@ -82,6 +82,24 @@ func Test_getPathCommunities(t *testing.T) {
 	assert.Equal(t, []uint32{uint32(65000)<<16 | 100}, found)
 }
 
+func Test_getPathEmptyASPathHasNoSegments(t *testing.T) {
+	b := &bgpServer{
+		c:           &bgpCfg{RouterID: "192.0.2.1", NextHop: "192.0.2.1"},
+		blockedComm: &communitySet{},
+	}
+	p, err := b.getPath(net.ParseIP("192.0.2.8"), domainBlocked)
+	assert.Nil(t, err)
+
+	var aspath *bgp.PathAttributeAsPath
+	for _, a := range p.Attrs {
+		if v, ok := a.(*bgp.PathAttributeAsPath); ok {
+			aspath = v
+		}
+	}
+	assert.NotNil(t, aspath)
+	assert.Empty(t, aspath.Value)
+}
+
 func Test_addHostCommunitiesInRIB(t *testing.T) {
 	b, err := newBgp(&bgpCfg{
 		AS:                   65000,

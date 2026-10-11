@@ -285,10 +285,11 @@ func (b *bgpServer) getPath(ip net.IP, class domainClass) (*apiutil.Path, error)
 		return nil, err
 	}
 
+	// Локальный маршрут: AS_PATH должен быть пустым (ноль сегментов).
+	// Сегмент AS_SEQUENCE с нулём ASN — это malformed; BIRD делает treat-as-withdraw:
+	// "Malformed AS_PATH attribute - zero-length segment (2) at 0".
 	origin := bgp.NewPathAttributeOrigin(0)
-	aspath := bgp.NewPathAttributeAsPath([]bgp.AsPathParamInterface{
-		bgp.NewAs4PathParam(bgp.BGP_ASPATH_ATTR_TYPE_SEQ, []uint32{}),
-	})
+	aspath := bgp.NewPathAttributeAsPath(nil)
 	attrs := []bgp.PathAttributeInterface{origin, aspath}
 
 	if family == bgp.RF_IPv6_UC {
