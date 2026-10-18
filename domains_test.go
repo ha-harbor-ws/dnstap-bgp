@@ -73,6 +73,13 @@ func Test_domainLevel(t *testing.T) {
 	assert.Equal(t, 5, domainLevel("a.b.c.d.e"))
 }
 
+func Test_preferClass(t *testing.T) {
+	assert.Equal(t, domainProxy, preferClass(domainDirect, domainProxy))
+	assert.Equal(t, domainProxy, preferClass(domainProxy, domainDirect))
+	assert.Equal(t, domainBlock, preferClass(domainProxy, domainBlock))
+	assert.Equal(t, domainDirect, preferClass(domainDirect, domainDirect))
+}
+
 func Test_domainListsClass(t *testing.T) {
 	proxy := "__proxy.txt"
 	direct := "__direct.txt"

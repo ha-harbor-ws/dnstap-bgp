@@ -62,6 +62,30 @@ func normalizeClass(c domainClass) domainClass {
 	}
 }
 
+// classRank: higher wins when one IP is seen for several domains (CDN).
+// block > proxy > direct — never downgrade an exported prefix.
+func classRank(c domainClass) int {
+	switch normalizeClass(c) {
+	case domainBlock:
+		return 3
+	case domainProxy:
+		return 2
+	case domainDirect:
+		return 1
+	default:
+		return 0
+	}
+}
+
+func preferClass(a, b domainClass) domainClass {
+	an := normalizeClass(a)
+	bn := normalizeClass(b)
+	if classRank(bn) > classRank(an) {
+		return bn
+	}
+	return an
+}
+
 type domainLists struct {
 	proxy  *domainTree
 	direct *domainTree
