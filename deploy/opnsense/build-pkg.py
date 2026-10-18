@@ -440,7 +440,11 @@ def main() -> int:
     pkg_path = dist / pkg_name
     write_pkg(pkg_path, manifest, files)
 
+    latest_path = dist / f"{PKG_NAME}-latest.pkg"
+    latest_path.write_bytes(pkg_path.read_bytes())
+
     print(f"==> {pkg_path}")
+    print(f"==> {latest_path} (alias for GitHub releases/latest)")
     print(f"==> abi {abi} arch {pkg_arch} size {pkg_path.stat().st_size} bytes")
     return 0
 

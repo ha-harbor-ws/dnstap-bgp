@@ -156,8 +156,18 @@ See the [releases page](https://github.com/ha-harbor-ws/dnstap-bgp/releases).
 
 ABI: `FreeBSD:15:amd64`.
 
+Versioned package (example for 1.5.1):
+
 ```
 pkg add os-dnstap-bgp-1.5.1-opnsense26.7-freebsd15-amd64.pkg
+```
+
+Stable alias on every release (always points at the current GitHub `latest`):
+
+```
+fetch -o os-dnstap-bgp-latest.pkg \
+  https://github.com/ha-harbor-ws/dnstap-bgp/releases/latest/download/os-dnstap-bgp-latest.pkg
+pkg add -f os-dnstap-bgp-latest.pkg
 ```
 
 The post-install script copies samples to:
