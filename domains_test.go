@@ -115,3 +115,22 @@ func Test_domainListsClass(t *testing.T) {
 	_, ok = d.classOf("other.test")
 	assert.False(t, ok)
 }
+
+func Test_domainListsPriorityOverSpecificity(t *testing.T) {
+	proxy := "__proxy_prio.txt"
+	direct := "__direct_prio.txt"
+	err := os.WriteFile(proxy, []byte("xboxservices.com\n"), 0666)
+	assert.Nil(t, err)
+	err = os.WriteFile(direct, []byte("fern.xboxservices.com\n"), 0666)
+	assert.Nil(t, err)
+	defer os.Remove(proxy)
+	defer os.Remove(direct)
+
+	d, _, _, _, _, _, _, err := loadDomainLists(proxy, direct, "")
+	assert.Nil(t, err)
+
+	// Parent in PROXY beats a more specific DIRECT entry.
+	class, ok := d.classOf("fern.xboxservices.com")
+	assert.True(t, ok)
+	assert.Equal(t, domainProxy, class)
+}

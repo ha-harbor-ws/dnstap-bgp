@@ -100,6 +100,8 @@ func newDomainLists() *domainLists {
 	}
 }
 
+// classOf: first matching list wins — block > proxy > direct
+// (parent in a higher list beats a more specific entry in a lower list).
 func (d *domainLists) classOf(s string) (domainClass, bool) {
 	if d.block.has(s) {
 		return domainBlock, true
