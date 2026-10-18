@@ -184,15 +184,25 @@ func main() {
 			if touch {
 				ipDBPut(prev)
 			}
-			if prev.Class != e.Class || prev.Domain != e.Domain {
-				log.Printf("%s: %s class %s -> %s", e.Domain, e.IP, prev.Class, e.Class)
-				if err := bgp.delHost(prev.IP, prev.Class); err != nil {
-					log.Printf("Unable to withdraw %s (%s): %s", prev.IP, prev.Class, err)
-				}
-				ipCache.add(e)
-				announce(e.IP, e.Class)
-				ipDBPut(e)
+			// CDN: one IP for many names — never downgrade block>proxy>direct.
+			if classRank(e.Class) < classRank(prev.Class) {
+				log.Printf("%s: %s keep class %s (ignore weaker %s)", e.Domain, e.IP, prev.Class, e.Class)
+				return false
 			}
+			if prev.Class == e.Class {
+				if prev.Domain != e.Domain {
+					prev.Domain = e.Domain
+					ipDBPut(prev)
+				}
+				return false
+			}
+			log.Printf("%s: %s class %s -> %s", e.Domain, e.IP, prev.Class, e.Class)
+			if err := bgp.delHost(prev.IP, prev.Class); err != nil {
+				log.Printf("Unable to withdraw %s (%s): %s", prev.IP, prev.Class, err)
+			}
+			ipCache.add(e)
+			announce(e.IP, e.Class)
+			ipDBPut(e)
 			return false
 		}
 
